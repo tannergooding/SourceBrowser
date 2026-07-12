@@ -4,7 +4,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <AssemblyName>HtmlGenerator</AssemblyName>
-    <TargetFramework>net472</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>Microsoft.SourceBrowser.HtmlGenerator</RootNamespace>
     <PlatformTarget>AnyCPU</PlatformTarget>
     <DebugType>embedded</DebugType>
@@ -32,7 +32,6 @@
     </Content>
   </ItemGroup>
   <ItemGroup>
-    <PackageReference Include="ExceptionAnalysis.Diagnostics" Version="1.0.0.39796" />
     <PackageReference Include="ManagedEsent" Version="2.0.0" />
     <PackageReference Include="Microsoft.Build" Version="$(NuGetVersionMSBuild)" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.Build.Framework" Version="$(NuGetVersionMSBuild)" ExcludeAssets="runtime" />
@@ -56,13 +55,11 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
     <PackageReference Include="System.Memory" Version="4.6.3" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="10.0.0" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\Common\Common.csproj" />
     <ProjectReference Include="..\MEF\MEF.csproj" />
-  </ItemGroup>
-  <ItemGroup>
-    <Reference Include="System.Configuration" />
   </ItemGroup>
   <Target Name="PublishWebsite" AfterTargets="CoreBuild" BeforeTargets="BuildNuGet">
     <MSBuild Targets="Publish" Projects="$(MSBuildThisFileDirectory)..\SourceIndexServer\SourceIndexServer.csproj" Properties="PublishDir=$(TargetDir)\Web;Configuration=Release" RemoveProperties="TargetFramework" />

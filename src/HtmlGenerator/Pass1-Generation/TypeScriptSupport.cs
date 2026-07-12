@@ -171,9 +171,16 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             Log.Write(destinationHtmlFilePath);
             var sb = new StringBuilder();
 
-            var lines = File.ReadAllLines(sourceFilePath);
             var text = File.ReadAllText(sourceFilePath);
-            var lineCount = lines.Length;
+            int lineCount = 0;
+            using (var reader = new StringReader(text))
+            {
+                while (reader.ReadLine() != null)
+                {
+                    lineCount++;
+                }
+            }
+
             var lineLengths = TextUtilities.GetLineLengths(text);
 
             var ranges = PrepareRanges(syntacticRanges, semanticRanges, text);

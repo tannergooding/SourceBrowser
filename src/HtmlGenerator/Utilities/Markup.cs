@@ -106,7 +106,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         private const string referencesFileHeader = @"<!DOCTYPE html>
 <html><head><meta charset=""utf-8""><meta name=""viewport"" content=""width=device-width, initial-scale=1""><title>{0}</title><link rel=""stylesheet"" href=""../../styles.css""/><script src=""../../scripts.js""></script></head><body onload=""ro();"">";
 
-        public static void WriteReferencesFileHeader(StreamWriter writer, string title)
+        public static void WriteReferencesFileHeader(TextWriter writer, string title)
         {
             writer.WriteLine(referencesFileHeader, title);
         }

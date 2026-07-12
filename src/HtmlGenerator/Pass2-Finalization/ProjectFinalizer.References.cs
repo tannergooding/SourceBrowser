@@ -31,36 +31,63 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             // exactly that set -- so track which symbols the shards produced and backfill the rest below.
             var writtenSymbols = new HashSet<string>(StringComparer.Ordinal);
 
-            if (shardFiles.Length != 0)
-            {
-                Log.Write("Creating references files for " + this.AssemblyId);
+            // Regular assemblies pack their per-symbol reference fragments into a single file per assembly
+            // instead of emitting ~185K individual <symbolId>.html files. Profiling showed the finalize
+            // phase is dominated by opening and closing those files (FileStream Dispose/ctor ~56%), while
+            // the fragment generation itself is negligible. The MSBuild/Guid assemblies keep individual
+            // files because IndexLoader enumerates their reference folders by file name.
+            bool packOutput = ShouldPackReferences();
+            ReferencePackBuilder pack = null;
 
-                // Process one shard at a time so the per-symbol grouping only ever holds a single shard's
-                // references in memory, then write that shard's HTML files in parallel. A symbol maps to
-                // exactly one shard, so its full reference set is always grouped from a single file.
-                foreach (var shardFile in shardFiles)
+            try
+            {
+                if (packOutput)
                 {
-                    try
+                    // The builder creates its files lazily on the first fragment, so a regular assembly with
+                    // no references produces no pack (and no R folder), matching the previous per-file output.
+                    pack = new ReferencePackBuilder(referencesFolder);
+                }
+
+                if (shardFiles.Length != 0)
+                {
+                    Log.Write("Creating references files for " + this.AssemblyId);
+
+                    // Process one shard at a time so the per-symbol grouping only ever holds a single shard's
+                    // references in memory, then write that shard's fragments in parallel. A symbol maps to
+                    // exactly one shard, so its full reference set is always grouped from a single file.
+                    foreach (var shardFile in shardFiles)
                     {
-                        GenerateReferencesFilesFromShard(shardFile, referencesFolder, writtenSymbols);
-                    }
-                    catch (Exception ex)
-                    {
-                        Log.Exception(ex, "Failed to generate references files for shard: " + shardFile);
+                        try
+                        {
+                            GenerateReferencesFilesFromShard(shardFile, referencesFolder, writtenSymbols, pack);
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Exception(ex, "Failed to generate references files for shard: " + shardFile);
+                        }
                     }
                 }
-            }
 
-            GenerateBaseAndInterfaceOnlyReferencesFiles(referencesFolder, writtenSymbols);
+                GenerateBaseAndInterfaceOnlyReferencesFiles(referencesFolder, writtenSymbols, pack);
+            }
+            finally
+            {
+                pack?.Complete();
+            }
         }
 
-        private void GenerateBaseAndInterfaceOnlyReferencesFiles(string referencesFolder, HashSet<string> writtenSymbols)
+        private bool ShouldPackReferences()
         {
-            if (this.AssemblyId == Constants.MSBuildItemsAssembly ||
-                this.AssemblyId == Constants.MSBuildPropertiesAssembly ||
-                this.AssemblyId == Constants.MSBuildTargetsAssembly ||
-                this.AssemblyId == Constants.MSBuildTasksAssembly ||
-                this.AssemblyId == Constants.GuidAssembly)
+            return this.AssemblyId != Constants.MSBuildItemsAssembly &&
+                this.AssemblyId != Constants.MSBuildPropertiesAssembly &&
+                this.AssemblyId != Constants.MSBuildTargetsAssembly &&
+                this.AssemblyId != Constants.MSBuildTasksAssembly &&
+                this.AssemblyId != Constants.GuidAssembly;
+        }
+
+        private void GenerateBaseAndInterfaceOnlyReferencesFiles(string referencesFolder, HashSet<string> writtenSymbols, ReferencePackBuilder pack)
+        {
+            if (!ShouldPackReferences())
             {
                 return;
             }
@@ -80,31 +107,43 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 return;
             }
 
-            Directory.CreateDirectory(referencesFolder);
-
-            Parallel.ForEach(
-                pending,
-                new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
-                id =>
+            var backfill = new List<string>();
+            foreach (var id in pending)
+            {
+                var symbolId = Serialization.ULongToHexString(id);
+                if (!writtenSymbols.Contains(symbolId))
                 {
-                    var symbolId = Serialization.ULongToHexString(id);
-                    if (writtenSymbols.Contains(symbolId))
-                    {
-                        return;
-                    }
+                    backfill.Add(symbolId);
+                }
+            }
 
+            var fragments = new byte[backfill.Count][];
+            Parallel.For(
+                0,
+                backfill.Count,
+                new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                i =>
+                {
                     try
                     {
-                        WriteReferencesFile(symbolId, Array.Empty<string>(), referencesFolder);
+                        fragments[i] = GenerateReferencesFragment(backfill[i], Array.Empty<string>());
                     }
                     catch (Exception ex)
                     {
-                        Log.Exception(ex, "Failed to generate base/interface references file for symbol: " + symbolId);
+                        Log.Exception(ex, "Failed to generate base/interface references file for symbol: " + backfill[i]);
                     }
                 });
+
+            for (int i = 0; i < backfill.Count; i++)
+            {
+                if (fragments[i] != null)
+                {
+                    pack.Add(backfill[i], fragments[i]);
+                }
+            }
         }
 
-        private void GenerateReferencesFilesFromShard(string shardFile, string referencesFolder, HashSet<string> writtenSymbols)
+        private void GenerateReferencesFilesFromShard(string shardFile, string referencesFolder, HashSet<string> writtenSymbols, ReferencePackBuilder pack)
         {
             var referencesBySymbol = new Dictionary<string, List<string>>(StringComparer.Ordinal);
 
@@ -141,6 +180,40 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 writtenSymbols.Add(symbolId);
             }
 
+            if (pack != null)
+            {
+                // Generate every fragment for this shard in parallel, then append them to the pack
+                // sequentially. The pack build only holds one shard's fragments in memory at a time.
+                var symbols = new List<KeyValuePair<string, List<string>>>(referencesBySymbol);
+                var fragments = new byte[symbols.Count][];
+
+                Parallel.For(
+                    0,
+                    symbols.Count,
+                    new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                    i =>
+                    {
+                        try
+                        {
+                            fragments[i] = GenerateReferencesFragment(symbols[i].Key, symbols[i].Value.ToArray());
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Exception(ex, "Failed to generate references fragment for symbol: " + symbols[i].Key);
+                        }
+                    });
+
+                for (int i = 0; i < symbols.Count; i++)
+                {
+                    if (fragments[i] != null)
+                    {
+                        pack.Add(symbols[i].Key, fragments[i]);
+                    }
+                }
+
+                return;
+            }
+
             Parallel.ForEach(
                 referencesBySymbol,
                 new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
@@ -157,158 +230,179 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 });
         }
 
+        // Generates a reference file fragment as its exact on-disk bytes. This routes through the same
+        // StreamWriter + Encoding.UTF8 path a per-symbol file would use, so the packed bytes -- including
+        // the UTF-8 preamble and CRLF line endings -- are identical to the standalone .html file.
+        private byte[] GenerateReferencesFragment(string symbolId, string[] referencesLines)
+        {
+            using (var stream = new MemoryStream())
+            {
+                using (var writer = new StreamWriter(stream, Encoding.UTF8, bufferSize: 65536, leaveOpen: true))
+                {
+                    WriteReferencesContent(writer, symbolId, referencesLines);
+                }
+
+                return stream.ToArray();
+            }
+        }
+
         private void WriteReferencesFile(string symbolId, string[] referencesLines, string referencesFolder)
         {
             string referencesFile = Path.Combine(referencesFolder, symbolId + ".html");
 
-            var referenceKindGroups = CreateReferences(referencesLines, out string symbolName);
-
             using (var writer = new StreamWriter(referencesFile, append: false, Encoding.UTF8, bufferSize: 65536))
             {
-                Markup.WriteReferencesFileHeader(writer, symbolName);
+                WriteReferencesContent(writer, symbolId, referencesLines);
+            }
+        }
 
-                if (this.AssemblyId != Constants.MSBuildItemsAssembly &&
-                    this.AssemblyId != Constants.MSBuildPropertiesAssembly &&
-                    this.AssemblyId != Constants.MSBuildTargetsAssembly &&
-                    this.AssemblyId != Constants.MSBuildTasksAssembly &&
-                    this.AssemblyId != Constants.GuidAssembly)
+        private void WriteReferencesContent(TextWriter writer, string symbolId, string[] referencesLines)
+        {
+            var referenceKindGroups = CreateReferences(referencesLines, out string symbolName);
+
+            Markup.WriteReferencesFileHeader(writer, symbolName);
+
+            if (this.AssemblyId != Constants.MSBuildItemsAssembly &&
+                this.AssemblyId != Constants.MSBuildPropertiesAssembly &&
+                this.AssemblyId != Constants.MSBuildTargetsAssembly &&
+                this.AssemblyId != Constants.MSBuildTasksAssembly &&
+                this.AssemblyId != Constants.GuidAssembly)
+            {
+                var id = Serialization.HexStringToULong(symbolId);
+                WriteBaseMember(id, writer);
+                WriteImplementedInterfaceMembers(id, writer);
+            }
+
+            foreach (var referenceKind in referenceKindGroups.OrderBy(k => (int)k.Kind))
+            {
+                string formatString = "";
+
+                switch (referenceKind.Kind)
                 {
-                    var id = Serialization.HexStringToULong(symbolId);
-                    WriteBaseMember(id, writer);
-                    WriteImplementedInterfaceMembers(id, writer);
+                    case ReferenceKind.Reference:
+                        formatString = "{0} reference{1} to {2}";
+                        break;
+                    case ReferenceKind.DerivedType:
+                        formatString = "{0} type{1} derived from {2}";
+                        break;
+                    case ReferenceKind.InterfaceInheritance:
+                        formatString = "{0} interface{1} inheriting from {2}";
+                        break;
+                    case ReferenceKind.InterfaceImplementation:
+                        formatString = "{0} implementation{1} of {2}";
+                        break;
+                    case ReferenceKind.Read:
+                        formatString = "{0} read{1} of {2}";
+                        break;
+                    case ReferenceKind.Write:
+                        formatString = "{0} write{1} to {2}";
+                        break;
+                    case ReferenceKind.Instantiation:
+                        formatString = "{0} instantiation{1} of {2}";
+                        break;
+                    case ReferenceKind.Override:
+                        formatString = "{0} override{1} of {2}";
+                        break;
+                    case ReferenceKind.InterfaceMemberImplementation:
+                        formatString = "{0} implementation{1} of {2}";
+                        break;
+                    case ReferenceKind.GuidUsage:
+                        formatString = "{0} usage{1} of Guid {2}";
+                        break;
+                    case ReferenceKind.EmptyArrayAllocation:
+                        formatString = "{0} allocation{1} of empty arrays";
+                        break;
+                    case ReferenceKind.MSBuildPropertyAssignment:
+                        formatString = "{0} assignment{1} to MSBuild property {2}";
+                        break;
+                    case ReferenceKind.MSBuildPropertyUsage:
+                        formatString = "{0} usage{1} of MSBuild property {2}";
+                        break;
+                    case ReferenceKind.MSBuildItemAssignment:
+                        formatString = "{0} assignment{1} to MSBuild item {2}";
+                        break;
+                    case ReferenceKind.MSBuildItemUsage:
+                        formatString = "{0} usage{1} of MSBuild item {2}";
+                        break;
+                    case ReferenceKind.MSBuildTargetDeclaration:
+                        formatString = "{0} declaration{1} of MSBuild target {2}";
+                        break;
+                    case ReferenceKind.MSBuildTargetUsage:
+                        formatString = "{0} usage{1} of MSBuild target {2}";
+                        break;
+                    case ReferenceKind.MSBuildTaskDeclaration:
+                        formatString = "{0} import{1} of MSBuild task {2}";
+                        break;
+                    case ReferenceKind.MSBuildTaskUsage:
+                        formatString = "{0} call{1} to MSBuild task {2}";
+                        break;
+                    default:
+                        throw new NotImplementedException("Missing case for " + referenceKind.Kind);
                 }
 
-                foreach (var referenceKind in referenceKindGroups.OrderBy(k => (int)k.Kind))
+                int totalReferenceCount = referenceKind.Count;
+                string headerText = string.Format(
+                    formatString,
+                    totalReferenceCount,
+                    totalReferenceCount == 1 ? "" : "s",
+                    symbolName);
+
+                writer.Write(@"<div class=""rH"">");
+                writer.Write(headerText);
+                writer.Write("</div>");
+
+                foreach (var sameAssemblyReferencesGroup in referenceKind.Assemblies.OrderBy(a => a.AssemblyName))
                 {
-                    string formatString = "";
+                    string assemblyName = sameAssemblyReferencesGroup.AssemblyName;
+                    writer.Write("<div class=\"rA\">");
+                    writer.Write(assemblyName);
+                    writer.Write(" (");
+                    writer.Write(sameAssemblyReferencesGroup.Count);
+                    writer.Write(")</div>");
 
-                    switch (referenceKind.Kind)
+                    writer.Write("<div class=\"rG\" id=\"");
+                    writer.Write(assemblyName);
+                    writer.Write("\">");
+
+                    foreach (var sameFileReferencesGroup in sameAssemblyReferencesGroup.Files.OrderBy(f => f.FilePath))
                     {
-                        case ReferenceKind.Reference:
-                            formatString = "{0} reference{1} to {2}";
-                            break;
-                        case ReferenceKind.DerivedType:
-                            formatString = "{0} type{1} derived from {2}";
-                            break;
-                        case ReferenceKind.InterfaceInheritance:
-                            formatString = "{0} interface{1} inheriting from {2}";
-                            break;
-                        case ReferenceKind.InterfaceImplementation:
-                            formatString = "{0} implementation{1} of {2}";
-                            break;
-                        case ReferenceKind.Read:
-                            formatString = "{0} read{1} of {2}";
-                            break;
-                        case ReferenceKind.Write:
-                            formatString = "{0} write{1} to {2}";
-                            break;
-                        case ReferenceKind.Instantiation:
-                            formatString = "{0} instantiation{1} of {2}";
-                            break;
-                        case ReferenceKind.Override:
-                            formatString = "{0} override{1} of {2}";
-                            break;
-                        case ReferenceKind.InterfaceMemberImplementation:
-                            formatString = "{0} implementation{1} of {2}";
-                            break;
-                        case ReferenceKind.GuidUsage:
-                            formatString = "{0} usage{1} of Guid {2}";
-                            break;
-                        case ReferenceKind.EmptyArrayAllocation:
-                            formatString = "{0} allocation{1} of empty arrays";
-                            break;
-                        case ReferenceKind.MSBuildPropertyAssignment:
-                            formatString = "{0} assignment{1} to MSBuild property {2}";
-                            break;
-                        case ReferenceKind.MSBuildPropertyUsage:
-                            formatString = "{0} usage{1} of MSBuild property {2}";
-                            break;
-                        case ReferenceKind.MSBuildItemAssignment:
-                            formatString = "{0} assignment{1} to MSBuild item {2}";
-                            break;
-                        case ReferenceKind.MSBuildItemUsage:
-                            formatString = "{0} usage{1} of MSBuild item {2}";
-                            break;
-                        case ReferenceKind.MSBuildTargetDeclaration:
-                            formatString = "{0} declaration{1} of MSBuild target {2}";
-                            break;
-                        case ReferenceKind.MSBuildTargetUsage:
-                            formatString = "{0} usage{1} of MSBuild target {2}";
-                            break;
-                        case ReferenceKind.MSBuildTaskDeclaration:
-                            formatString = "{0} import{1} of MSBuild task {2}";
-                            break;
-                        case ReferenceKind.MSBuildTaskUsage:
-                            formatString = "{0} call{1} to MSBuild task {2}";
-                            break;
-                        default:
-                            throw new NotImplementedException("Missing case for " + referenceKind.Kind);
-                    }
-
-                    int totalReferenceCount = referenceKind.Count;
-                    string headerText = string.Format(
-                        formatString,
-                        totalReferenceCount,
-                        totalReferenceCount == 1 ? "" : "s",
-                        symbolName);
-
-                    writer.Write(@"<div class=""rH"">");
-                    writer.Write(headerText);
-                    writer.Write("</div>");
-
-                    foreach (var sameAssemblyReferencesGroup in referenceKind.Assemblies.OrderBy(a => a.AssemblyName))
-                    {
-                        string assemblyName = sameAssemblyReferencesGroup.AssemblyName;
-                        writer.Write("<div class=\"rA\">");
-                        writer.Write(assemblyName);
+                        writer.Write("<div class=\"rF\">");
+                        writer.Write("<div class=\"rN\">");
+                        writer.Write(sameFileReferencesGroup.FilePath);
                         writer.Write(" (");
-                        writer.Write(sameAssemblyReferencesGroup.Count);
+                        writer.Write(sameFileReferencesGroup.Count);
                         writer.Write(")</div>");
+                        writer.WriteLine();
 
-                        writer.Write("<div class=\"rG\" id=\"");
-                        writer.Write(assemblyName);
-                        writer.Write("\">");
-
-                        foreach (var sameFileReferencesGroup in sameAssemblyReferencesGroup.Files.OrderBy(f => f.FilePath))
+                        foreach (var sameLineReferencesGroup in sameFileReferencesGroup.Lines)
                         {
-                            writer.Write("<div class=\"rF\">");
-                            writer.Write("<div class=\"rN\">");
-                            writer.Write(sameFileReferencesGroup.FilePath);
-                            writer.Write(" (");
-                            writer.Write(sameFileReferencesGroup.Count);
-                            writer.Write(")</div>");
-                            writer.WriteLine();
+                            var references = sameLineReferencesGroup.References;
+                            var url = references[0].Url;
+                            writer.Write("<a href=\"");
+                            writer.Write(url);
+                            writer.Write("\">");
 
-                            foreach (var sameLineReferencesGroup in sameFileReferencesGroup.Lines)
-                            {
-                                var references = sameLineReferencesGroup.References;
-                                var url = references[0].Url;
-                                writer.Write("<a href=\"");
-                                writer.Write(url);
-                                writer.Write("\">");
-
-                                writer.Write("<b>");
-                                writer.Write(sameLineReferencesGroup.LineNumber);
-                                writer.Write("</b>");
-                                MergeOccurrences(writer, references);
-                                writer.Write("</a>");
-                                writer.WriteLine();
-                            }
-
-                            writer.Write("</div>");
+                            writer.Write("<b>");
+                            writer.Write(sameLineReferencesGroup.LineNumber);
+                            writer.Write("</b>");
+                            MergeOccurrences(writer, references);
+                            writer.Write("</a>");
                             writer.WriteLine();
                         }
 
                         writer.Write("</div>");
                         writer.WriteLine();
                     }
-                }
 
-                Write(writer, "</body></html>");
+                    writer.Write("</div>");
+                    writer.WriteLine();
+                }
             }
+
+            Write(writer, "</body></html>");
         }
 
-        private void WriteImplementedInterfaceMembers(ulong symbolId, StreamWriter writer)
+        private void WriteImplementedInterfaceMembers(ulong symbolId, TextWriter writer)
         {
             if (!ImplementedInterfaceMembers.TryGetValue(symbolId, out HashSet<Tuple<string, ulong>> implementedInterfaceMembers))
             {
@@ -336,7 +430,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             }
         }
 
-        private void WriteBaseMember(ulong symbolId, StreamWriter writer)
+        private void WriteBaseMember(ulong symbolId, TextWriter writer)
         {
             if (!BaseMembers.TryGetValue(symbolId, out Tuple<string, ulong> baseMemberLink))
             {
@@ -458,7 +552,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             return kindGroups;
         }
 
-        private static void MergeOccurrences(StreamWriter writer, IEnumerable<Reference> referencesOnTheSameLine)
+        private static void MergeOccurrences(TextWriter writer, IEnumerable<Reference> referencesOnTheSameLine)
         {
             var text = referencesOnTheSameLine.First().ReferenceLineText;
             referencesOnTheSameLine = referencesOnTheSameLine.OrderBy(r => r.ReferenceColumnStart);
@@ -506,9 +600,72 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             }
         }
 
-        private static void Write(StreamWriter sw, string text)
+        private static void Write(TextWriter sw, string text)
         {
             sw.Write(text);
+        }
+
+        // Appends per-symbol reference fragments into a single pack file for an assembly and records each
+        // fragment's byte range in a companion index. Fragments are appended sequentially by a single
+        // caller, so no locking is required; the parallelism happens in fragment generation upstream.
+        //
+        // Pack file:  the raw fragment bytes concatenated back-to-back (each is a complete .html body,
+        //             preamble and all, so the server can return them verbatim).
+        // Index file: int32 record count, then per record 16 ASCII symbol-id bytes, int64 offset,
+        //             int32 length. The 16-char lowercase hex id is exactly the request file name.
+        private sealed class ReferencePackBuilder
+        {
+            private readonly string _referencesFolder;
+            private readonly List<(string Id, long Offset, int Length)> _records = new List<(string, long, int)>();
+            private FileStream _packStream;
+            private long _offset;
+
+            public ReferencePackBuilder(string referencesFolder)
+            {
+                _referencesFolder = referencesFolder;
+            }
+
+            public void Add(string symbolId, byte[] fragment)
+            {
+                if (_packStream == null)
+                {
+                    Directory.CreateDirectory(_referencesFolder);
+                    var packPath = Path.Combine(_referencesFolder, Constants.ReferencePackFileName);
+                    _packStream = new FileStream(packPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 1 << 20, FileOptions.SequentialScan);
+                }
+
+                _packStream.Write(fragment, 0, fragment.Length);
+                _records.Add((symbolId, _offset, fragment.Length));
+                _offset += fragment.Length;
+            }
+
+            public void Complete()
+            {
+                if (_packStream == null)
+                {
+                    // Nothing was written, so leave no pack or index behind.
+                    return;
+                }
+
+                _packStream.Dispose();
+
+                var indexPath = Path.Combine(_referencesFolder, Constants.ReferenceIndexFileName);
+                using (var stream = new FileStream(indexPath, FileMode.Create, FileAccess.Write, FileShare.None, bufferSize: 1 << 20, FileOptions.SequentialScan))
+                using (var writer = new BinaryWriter(stream))
+                {
+                    writer.Write(_records.Count);
+
+                    var idBytes = new byte[16];
+                    foreach (var (id, offset, length) in _records)
+                    {
+                        // Symbol ids are always 16 lowercase hex characters, i.e. exactly 16 ASCII bytes.
+                        Encoding.ASCII.GetBytes(id, 0, id.Length, idBytes, 0);
+                        writer.Write(idBytes, 0, 16);
+                        writer.Write(offset);
+                        writer.Write(length);
+                    }
+                }
+            }
         }
     }
 }

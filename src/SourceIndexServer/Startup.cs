@@ -46,6 +46,7 @@ namespace Microsoft.SourceBrowser.SourceIndexServer
             }
 
             app.UseDefaultFiles();
+            app.UseMiddleware<ReferencePackMiddleware>(RootPath);
             app.UseStaticFiles(new StaticFileOptions
             {
                 FileProvider = new PhysicalFileProvider(RootPath, ExclusionFilters.Sensitive & ~ExclusionFilters.DotPrefixed),

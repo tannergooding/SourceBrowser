@@ -150,21 +150,31 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                     }
                 }
 
+                var collectors = new ConcurrentBag<ReferenceCollector>();
                 var generationTasks = Partitioner.Create(documents)
                     .GetPartitions(Environment.ProcessorCount)
                     .Select(partition =>
                         Task.Run(async () =>
                         {
+                            var collector = new ReferenceCollector();
+                            collectors.Add(collector);
                             using (partition)
                             {
                                 while (partition.MoveNext())
                                 {
-                                  await GenerateDocumentAsync(partition.Current);
+                                  await GenerateDocumentAsync(partition.Current, collector);
                                 }
                             }
                         }));
 
                 await Task.WhenAll(generationTasks);
+
+                // Fold the per-partition collectors into the shared map now that all Tasks have
+                // completed, so the merge runs single-threaded and needs no locking.
+                foreach (var collector in collectors)
+                {
+                    MergeReferences(collector);
+                }
 
                 foreach (var document in documents)
                 {
@@ -222,11 +232,11 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             NamespaceExplorer.WriteNamespaceExplorer(this.AssemblyName, symbols, ProjectDestinationFolder);
         }
 
-        private async Task GenerateDocumentAsync(Document document)
+        private async Task GenerateDocumentAsync(Document document, ReferenceCollector collector)
         {
             try
             {
-                var documentGenerator = new DocumentGenerator(this, document);
+                var documentGenerator = new DocumentGenerator(this, document, collector);
                 await documentGenerator.GenerateAsync();
             }
             catch (Exception e)

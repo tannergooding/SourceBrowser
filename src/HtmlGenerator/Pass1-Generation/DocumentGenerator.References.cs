@@ -376,7 +376,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                         symbolId,
                         classifiedSpan.TextSpan.Start,
                         classifiedSpan.TextSpan.End,
-                        kind);
+                        kind,
+                        referenceCollector);
                 }
             }
 

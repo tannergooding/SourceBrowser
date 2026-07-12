@@ -19,6 +19,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         public string relativePathToRoot;
         public string documentRelativeFilePathWithoutHtmlExtension;
 
+        private readonly ProjectGenerator.ReferenceCollector referenceCollector;
+
         private Classification classifier;
 
         public SourceText Text;
@@ -32,10 +34,12 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
         public DocumentGenerator(
             ProjectGenerator projectGenerator,
-            Document document)
+            Document document,
+            ProjectGenerator.ReferenceCollector referenceCollector)
         {
             this.projectGenerator = projectGenerator;
             this.Document = document;
+            this.referenceCollector = referenceCollector;
         }
 
         public async Task GenerateAsync()

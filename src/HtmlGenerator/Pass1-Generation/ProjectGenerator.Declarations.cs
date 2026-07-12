@@ -141,12 +141,6 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         {
             Log.Write("Base members...");
 
-            var assemblyReferencesDataFolder = Path.Combine(
-                    this.SolutionGenerator.SolutionDestinationFolder,
-                    this.AssemblyName,
-                    Constants.ReferencesFileName);
-            Directory.CreateDirectory(assemblyReferencesDataFolder);
-
             lock (this.BaseMembers)
             {
                 var lines = new List<string>(this.BaseMembers.Count);
@@ -158,12 +152,6 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                         SymbolIdService.GetAssemblyId(kvp.Value.ContainingAssembly) + ";" +
                         SymbolIdService.GetId(kvp.Value);
                     lines.Add(line);
-
-                    // just make sure the references file for this symbol exists, so that even if symbols
-                    // that aren't referenced anywhere get a reference file with a base member link if there
-                    // is a base member for the symbol
-                    var referencesFile = Path.Combine(assemblyReferencesDataFolder, fromMemberId + ".txt");
-                    File.AppendAllText(referencesFile, "");
                 }
 
                 var fileName = Path.Combine(ProjectDestinationFolder, Constants.BaseMembersFileName + ".txt");
@@ -193,12 +181,6 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         {
             Log.Write("Implemented interface members...");
 
-            var assemblyReferencesDataFolder = Path.Combine(
-                    this.SolutionGenerator.SolutionDestinationFolder,
-                    this.AssemblyName,
-                    Constants.ReferencesFileName);
-            Directory.CreateDirectory(assemblyReferencesDataFolder);
-
             lock (this.ImplementedInterfaceMembers)
             {
                 var lines = new List<string>(this.ImplementedInterfaceMembers.Count);
@@ -214,12 +196,6 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                             SymbolIdService.GetId(implementedInterfaceMember);
                         lines.Add(line);
                     }
-
-                    // just make sure the references file for this symbol exists, so that even if symbols
-                    // that aren't referenced anywhere get a reference file with a base member link if there
-                    // is a base member for the symbol
-                    var referencesFile = Path.Combine(assemblyReferencesDataFolder, fromMemberId + ".txt");
-                    File.AppendAllText(referencesFile, "");
                 }
 
                 var fileName = Path.Combine(ProjectDestinationFolder, Constants.ImplementedInterfaceMembersFileName + ".txt");

@@ -19,38 +19,151 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
         public void GenerateFinalReferencesFiles(string referencesFolder)
         {
-            var files = Directory.GetFiles(referencesFolder, "*.txt");
-            if (files.Length == 0)
+            var shardFiles = Directory.Exists(referencesFolder)
+                ? Directory.GetFiles(
+                    referencesFolder,
+                    ProjectGenerator.ReferenceShardPrefix + "*" + ProjectGenerator.ReferenceShardExtension)
+                : Array.Empty<string>();
+
+            // Symbols that only have a base member or implemented interface member link (and no actual
+            // references) still need a references file so those links render. They are no longer tracked
+            // via per-symbol marker files -- the base/interface member maps loaded in Pass2 already hold
+            // exactly that set -- so track which symbols the shards produced and backfill the rest below.
+            var writtenSymbols = new HashSet<string>(StringComparer.Ordinal);
+
+            if (shardFiles.Length != 0)
+            {
+                Log.Write("Creating references files for " + this.AssemblyId);
+
+                // Process one shard at a time so the per-symbol grouping only ever holds a single shard's
+                // references in memory, then write that shard's HTML files in parallel. A symbol maps to
+                // exactly one shard, so its full reference set is always grouped from a single file.
+                foreach (var shardFile in shardFiles)
+                {
+                    try
+                    {
+                        GenerateReferencesFilesFromShard(shardFile, referencesFolder, writtenSymbols);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Exception(ex, "Failed to generate references files for shard: " + shardFile);
+                    }
+                }
+            }
+
+            GenerateBaseAndInterfaceOnlyReferencesFiles(referencesFolder, writtenSymbols);
+        }
+
+        private void GenerateBaseAndInterfaceOnlyReferencesFiles(string referencesFolder, HashSet<string> writtenSymbols)
+        {
+            if (this.AssemblyId == Constants.MSBuildItemsAssembly ||
+                this.AssemblyId == Constants.MSBuildPropertiesAssembly ||
+                this.AssemblyId == Constants.MSBuildTargetsAssembly ||
+                this.AssemblyId == Constants.MSBuildTasksAssembly ||
+                this.AssemblyId == Constants.GuidAssembly)
             {
                 return;
             }
 
-            Log.Write("Creating references files for " + this.AssemblyId);
-            Parallel.ForEach(
-                files,
-                new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
-                referencesFile =>
+            var pending = new HashSet<ulong>();
+            foreach (var id in BaseMembers.Keys)
             {
-                try
+                pending.Add(id);
+            }
+            foreach (var id in ImplementedInterfaceMembers.Keys)
+            {
+                pending.Add(id);
+            }
+
+            if (pending.Count == 0)
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(referencesFolder);
+
+            Parallel.ForEach(
+                pending,
+                new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                id =>
                 {
-                    GenerateReferencesFile(referencesFile);
-                }
-                catch (Exception ex)
-                {
-                    Log.Exception(ex, "Failed to generate references file for: " + referencesFile);
-                }
-            });
+                    var symbolId = Serialization.ULongToHexString(id);
+                    if (writtenSymbols.Contains(symbolId))
+                    {
+                        return;
+                    }
+
+                    try
+                    {
+                        WriteReferencesFile(symbolId, Array.Empty<string>(), referencesFolder);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Exception(ex, "Failed to generate base/interface references file for symbol: " + symbolId);
+                    }
+                });
         }
 
-        private void GenerateReferencesFile(string referencesFile)
+        private void GenerateReferencesFilesFromShard(string shardFile, string referencesFolder, HashSet<string> writtenSymbols)
         {
-            string[] referencesLines = File.ReadAllLines(referencesFile, Encoding.UTF8);
-            string rawReferencesFile = referencesFile;
-            referencesFile = Path.ChangeExtension(referencesFile, ".html");
+            var referencesBySymbol = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+
+            // Read the shard and mark it delete-on-close so it is removed once consumed. Each record is
+            // three lines: the symbol id followed by the two lines Reference.WriteTo emits.
+            using (var stream = new FileStream(shardFile, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, bufferSize: 65536, FileOptions.SequentialScan | FileOptions.DeleteOnClose))
+            using (var reader = new StreamReader(stream, Encoding.UTF8))
+            {
+                string symbolId;
+                while ((symbolId = reader.ReadLine()) != null)
+                {
+                    string separatedLine = reader.ReadLine();
+                    string sourceLine = reader.ReadLine();
+                    if (separatedLine == null || sourceLine == null)
+                    {
+                        break;
+                    }
+
+                    if (!referencesBySymbol.TryGetValue(symbolId, out var lines))
+                    {
+                        lines = new List<string>();
+                        referencesBySymbol.Add(symbolId, lines);
+                    }
+
+                    lines.Add(separatedLine);
+                    lines.Add(sourceLine);
+                }
+            }
+
+            // Record which symbols this shard produced so the base/interface-only backfill can skip them.
+            // A symbol maps to exactly one shard, so this runs single-threaded across shards without racing.
+            foreach (var symbolId in referencesBySymbol.Keys)
+            {
+                writtenSymbols.Add(symbolId);
+            }
+
+            Parallel.ForEach(
+                referencesBySymbol,
+                new ParallelOptions { MaxDegreeOfParallelism = Environment.ProcessorCount },
+                symbol =>
+                {
+                    try
+                    {
+                        WriteReferencesFile(symbol.Key, symbol.Value.ToArray(), referencesFolder);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Exception(ex, "Failed to generate references file for symbol: " + symbol.Key);
+                    }
+                });
+        }
+
+        private void WriteReferencesFile(string symbolId, string[] referencesLines, string referencesFolder)
+        {
+            string referencesFile = Path.Combine(referencesFolder, symbolId + ".html");
 
             var referenceKindGroups = CreateReferences(referencesLines, out string symbolName);
 
-            using (var writer = new StreamWriter(referencesFile, append: false, encoding: Encoding.UTF8))
+            using (var writer = new StreamWriter(referencesFile, append: false, Encoding.UTF8, bufferSize: 65536))
             {
                 Markup.WriteReferencesFileHeader(writer, symbolName);
 
@@ -60,7 +173,6 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                     this.AssemblyId != Constants.MSBuildTasksAssembly &&
                     this.AssemblyId != Constants.GuidAssembly)
                 {
-                    string symbolId = Path.GetFileNameWithoutExtension(referencesFile);
                     var id = Serialization.HexStringToULong(symbolId);
                     WriteBaseMember(id, writer);
                     WriteImplementedInterfaceMembers(id, writer);
@@ -140,41 +252,60 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                         totalReferenceCount == 1 ? "" : "s",
                         symbolName);
 
-                    Write(writer, string.Format(@"<div class=""rH"">{0}</div>", headerText));
+                    writer.Write(@"<div class=""rH"">");
+                    writer.Write(headerText);
+                    writer.Write("</div>");
 
                     foreach (var sameAssemblyReferencesGroup in referenceKind.Assemblies.OrderBy(a => a.AssemblyName))
                     {
                         string assemblyName = sameAssemblyReferencesGroup.AssemblyName;
-                        Write(writer, "<div class=\"rA\">{0} ({1})</div>", assemblyName, sameAssemblyReferencesGroup.Count);
-                        Write(writer, "<div class=\"rG\" id=\"{0}\">", assemblyName);
+                        writer.Write("<div class=\"rA\">");
+                        writer.Write(assemblyName);
+                        writer.Write(" (");
+                        writer.Write(sameAssemblyReferencesGroup.Count);
+                        writer.Write(")</div>");
+
+                        writer.Write("<div class=\"rG\" id=\"");
+                        writer.Write(assemblyName);
+                        writer.Write("\">");
 
                         foreach (var sameFileReferencesGroup in sameAssemblyReferencesGroup.Files.OrderBy(f => f.FilePath))
                         {
-                            Write(writer, "<div class=\"rF\">");
-                            WriteLine(writer, "<div class=\"rN\">{0} ({1})</div>", sameFileReferencesGroup.FilePath, sameFileReferencesGroup.Count);
+                            writer.Write("<div class=\"rF\">");
+                            writer.Write("<div class=\"rN\">");
+                            writer.Write(sameFileReferencesGroup.FilePath);
+                            writer.Write(" (");
+                            writer.Write(sameFileReferencesGroup.Count);
+                            writer.Write(")</div>");
+                            writer.WriteLine();
 
                             foreach (var sameLineReferencesGroup in sameFileReferencesGroup.Lines)
                             {
                                 var references = sameLineReferencesGroup.References;
                                 var url = references[0].Url;
-                                Write(writer, "<a href=\"{0}\">", url);
+                                writer.Write("<a href=\"");
+                                writer.Write(url);
+                                writer.Write("\">");
 
-                                Write(writer, "<b>{0}</b>", sameLineReferencesGroup.LineNumber);
+                                writer.Write("<b>");
+                                writer.Write(sameLineReferencesGroup.LineNumber);
+                                writer.Write("</b>");
                                 MergeOccurrences(writer, references);
-                                WriteLine(writer, "</a>");
+                                writer.Write("</a>");
+                                writer.WriteLine();
                             }
 
-                            WriteLine(writer, "</div>");
+                            writer.Write("</div>");
+                            writer.WriteLine();
                         }
 
-                        WriteLine(writer, "</div>");
+                        writer.Write("</div>");
+                        writer.WriteLine();
                     }
                 }
 
                 Write(writer, "</body></html>");
             }
-
-            File.Delete(rawReferencesFile);
         }
 
         private void WriteImplementedInterfaceMembers(ulong symbolId, StreamWriter writer)
@@ -378,21 +509,6 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         private static void Write(StreamWriter sw, string text)
         {
             sw.Write(text);
-        }
-
-        private static void Write(StreamWriter sw, string format, params object[] args)
-        {
-            sw.Write(string.Format(format, args));
-        }
-
-        private static void WriteLine(StreamWriter sw, string text)
-        {
-            sw.WriteLine(text);
-        }
-
-        private static void WriteLine(StreamWriter sw, string format, params object[] args)
-        {
-            sw.WriteLine(string.Format(format, args));
         }
     }
 }

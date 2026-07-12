@@ -47,7 +47,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                     "EmptyArrayAllocation",
                     range.ClassifiedSpan.TextSpan.Start,
                     range.ClassifiedSpan.TextSpan.End,
-                    ReferenceKind.EmptyArrayAllocation);
+                    ReferenceKind.EmptyArrayAllocation,
+                    referenceCollector);
                 return null;
             }
 
@@ -343,7 +344,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 symbolId,
                 spanStart,
                 spanEnd,
-                ReferenceKind.GuidUsage);
+                ReferenceKind.GuidUsage,
+                referenceCollector);
 
             return link;
         }

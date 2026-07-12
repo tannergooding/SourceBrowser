@@ -210,13 +210,17 @@ redirectToReferences();
             return "</pre></div></div></div></body></html>";
         }
 
-        public static void WriteMetadataToSourceRedirectPrefix(StreamWriter writer)
+        public static void WriteMetadataToSourceRedirectPrefix(StreamWriter writer, bool includeFileList = false)
         {
-            const string contents = @"<!DOCTYPE html>
-<html><head><title>Redirecting...</title><script src=""../scripts.js""></script>
-<script>
-";
-            writer.WriteLine(contents);
+            writer.WriteLine(@"<!DOCTYPE html>
+<html><head><title>Redirecting...</title><script src=""../scripts.js""></script>");
+
+            if (includeFileList)
+            {
+                writer.WriteLine(@"<script src=""A.files.js""></script>");
+            }
+
+            writer.WriteLine("<script>");
         }
 
         public static void WriteMetadataToSourceRedirectSuffix(StreamWriter writer)

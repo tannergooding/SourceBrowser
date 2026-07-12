@@ -38,7 +38,6 @@
     <PackageVersion Include="MSTest.TestAdapter" Version="4.3.0" />
     <PackageVersion Include="MSTest.TestFramework" Version="4.3.0" />
     <PackageVersion Include="Shouldly" Version="4.3.0" />
-    <PackageVersion Include="System.ComponentModel.Composition" Version="10.0.9" />
     <PackageVersion Include="System.Configuration.ConfigurationManager" Version="10.0.9" />
     <PackageVersion Include="System.Security.Cryptography.Xml" Version="10.0.9" />
   </ItemGroup>

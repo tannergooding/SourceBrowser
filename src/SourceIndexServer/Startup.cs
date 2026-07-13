@@ -1,6 +1,9 @@
 ﻿using System.IO;
+using System.IO.Compression;
+using System.Linq;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.FileProviders.Physical;
@@ -31,6 +34,27 @@ namespace Microsoft.SourceBrowser.SourceIndexServer
             }
 
             services.AddSingleton(new Index(RootPath));
+
+            // Everything we serve is generated static text -- HTML source pages, the namespace explorer
+            // (multiple MB on large indexes), scripts, and the .txt index stats -- so compressing responses
+            // is a large, broad win for download size, which matters most on mobile/cellular. Brotli and
+            // gzip are both offered so any browser gets one. The content is public and carries no secrets,
+            // so enabling compression over HTTPS poses no BREACH concern. Fastest keeps per-request CPU low
+            // (Brotli's Optimal is its slow max-quality mode, which would stall on the multi-MB pages).
+            services.AddResponseCompression(options =>
+            {
+                options.EnableForHttps = true;
+                options.Providers.Add<BrotliCompressionProvider>();
+                options.Providers.Add<GzipCompressionProvider>();
+                options.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat(new[]
+                {
+                    "text/javascript",
+                    "image/svg+xml",
+                });
+            });
+            services.Configure<BrotliCompressionProviderOptions>(options => options.Level = CompressionLevel.Fastest);
+            services.Configure<GzipCompressionProviderOptions>(options => options.Level = CompressionLevel.Fastest);
+
             services.AddControllersWithViews();
             services.AddRazorPages();
         }
@@ -44,6 +68,10 @@ namespace Microsoft.SourceBrowser.SourceIndexServer
             {
                 app.UseDeveloperExceptionPage();
             }
+
+            // Sits ahead of the reference middleware and both static-file handlers so their responses,
+            // including the packed reference fragments, are compressed.
+            app.UseResponseCompression();
 
             app.UseDefaultFiles();
             app.UseMiddleware<ReferencePackMiddleware>(RootPath);

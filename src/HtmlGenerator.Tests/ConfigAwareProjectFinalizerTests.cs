@@ -271,6 +271,64 @@ namespace HtmlGenerator.Tests
         }
 
         [TestMethod]
+        public void Finalize_StagesTaggedVariants_ForAFileThatRendersDifferentlyAcrossConfigs()
+        {
+            // "EnvHelper.cs" exists at the SAME relative path under BOTH configs but renders DIFFERENT
+            // content (e.g. an "#if WINDOWS" region whose active branch differs) -- ConfigFileDeduper's
+            // "shared-render-divergent" bucket. "Program.cs" exists at the same path under both configs
+            // too, but renders IDENTICALLY -- the common case, which must stay completely untouched (no
+            // banner, no extra variant, single physical page).
+            CreateAssemblyFixture(linuxObjRoot, "Shared", referencedAssemblies: null);
+            CreateAssemblyFixture(windowsObjRoot, "Shared", referencedAssemblies: null);
+
+            string LinkPanel() => "<div class=\"dH\">header</div>";
+
+            File.WriteAllText(Path.Combine(linuxObjRoot, "Shared", "EnvHelper.cs.html"), LinkPanel() + "<div class=\"code\">unix branch active</div>");
+            File.WriteAllText(Path.Combine(windowsObjRoot, "Shared", "EnvHelper.cs.html"), LinkPanel() + "<div class=\"code\">windows branch active</div>");
+
+            File.WriteAllText(Path.Combine(linuxObjRoot, "Shared", "Program.cs.html"), LinkPanel() + "<div class=\"code\">identical everywhere</div>");
+            File.WriteAllText(Path.Combine(windowsObjRoot, "Shared", "Program.cs.html"), LinkPanel() + "<div class=\"code\">identical everywhere</div>");
+
+            var configObjRoots = new Dictionary<string, string> { ["linux"] = linuxObjRoot, ["windows"] = windowsObjRoot };
+
+            ConfigAwareProjectFinalizer.Finalize(configObjRoots, websiteDestinationFolder, emitAssemblyList: false, federation: new Federation());
+
+            var sharedFolder = Path.Combine(websiteDestinationFolder, "Shared");
+
+            // The non-divergent file must stay a single physical page with no switcher banner at all --
+            // byte-identical to what a single-config run would have produced.
+            var programHtml = File.ReadAllText(Path.Combine(sharedFolder, "Program.cs.html"));
+            programHtml.ShouldNotContain("configFileVariantBanner");
+            Directory.GetFiles(sharedFolder, "Program.cs~*.html").ShouldBeEmpty();
+
+            // The divergent file's PRIMARY (linux -- alphabetically first) rendering must keep the
+            // ORIGINAL path, not an arbitrary hash-order pick, so any existing link into it keeps working.
+            var primaryVariantPath = Path.Combine(sharedFolder, "EnvHelper.cs.html");
+            File.Exists(primaryVariantPath).ShouldBeTrue();
+            var primaryHtml = File.ReadAllText(primaryVariantPath);
+            primaryHtml.ShouldContain("unix branch active");
+
+            // Exactly one alternate, suffixed variant for the windows rendering.
+            var suffixedFiles = Directory.GetFiles(sharedFolder, "EnvHelper.cs~*.html");
+            suffixedFiles.Length.ShouldBe(1);
+            var alternateHtml = File.ReadAllText(suffixedFiles[0]);
+            alternateHtml.ShouldContain("windows branch active");
+
+            // Both pages must carry a config-tagged switcher banner the client selector can grey/hide
+            // between, each variant tagged with its OWN config(s) -- not the other's.
+            primaryHtml.ShouldContain("configFileVariantBanner");
+            primaryHtml.ShouldContain("data-configs=\"linux\"");
+            alternateHtml.ShouldContain("configFileVariantBanner");
+            alternateHtml.ShouldContain("data-configs=\"windows\"");
+
+            // Each banner must link to the OTHER variant so a reader can actually reach it.
+            var alternateFileName = Path.GetFileName(suffixedFiles[0]);
+            var alternateUrlFragment = "Shared/" + Path.GetFileNameWithoutExtension(alternateFileName);
+            primaryHtml.ShouldContain(alternateUrlFragment);
+            alternateHtml.ShouldContain("Shared/EnvHelper.cs\"");
+        }
+
+        [TestMethod]
         public void Finalize_RewritesDisambiguationPage_ForADeclarationThatDivergesAcrossConfigs()
         {
             // "Widget" is declared in a DIFFERENT single file under each config -- Widget.Windows.cs
@@ -308,8 +366,30 @@ namespace HtmlGenerator.Tests
             disambiguationHtml.ShouldContain("<span class=\"partialTypeConfigTag\">[linux]</span>");
             disambiguationHtml.ShouldContain("<span class=\"partialTypeConfigTag\">[windows]</span>");
 
+            // Machine-readable data-configs, for the client config selector -- neither location covers
+            // both registered configs, so both links must be tagged (sentinel for the selector's
+            // "declarations carry data-configs" contract).
+            disambiguationHtml.ShouldContain("data-configs=\"linux\"");
+            disambiguationHtml.ShouldContain("data-configs=\"windows\"");
+
             // And the windows-only file it links to must actually be reachable in the merged site.
             File.Exists(Path.Combine(websiteDestinationFolder, "Shared", "Widget.Windows.cs.html")).ShouldBeTrue();
+        }
+
+        [TestMethod]
+        public void Finalize_WritesRegisteredConfigsFile_ForTheClientSelectorToDiscover()
+        {
+            CreateAssemblyFixture(linuxObjRoot, "Shared", referencedAssemblies: null);
+            CreateAssemblyFixture(windowsObjRoot, "Shared", referencedAssemblies: null);
+
+            var configObjRoots = new Dictionary<string, string> { ["linux"] = linuxObjRoot, ["windows"] = windowsObjRoot };
+
+            ConfigAwareProjectFinalizer.Finalize(configObjRoots, websiteDestinationFolder, emitAssemblyList: false, federation: new Federation());
+
+            var configsFilePath = Path.Combine(websiteDestinationFolder, Constants.RegisteredConfigsFileName);
+            File.Exists(configsFilePath).ShouldBeTrue(
+                "A config-aware merge must expose the registered config list at the website root so the client selector can discover it.");
+            File.ReadAllText(configsFilePath).ShouldBe("[\"linux\",\"windows\"]");
         }
 
         [TestMethod]

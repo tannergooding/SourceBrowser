@@ -244,6 +244,8 @@ function onHeaderLoad() {
             onSearchChange();
         }
     };
+
+    sbInitConfigSelector();
 }
 
 function onResultsLoad() {
@@ -308,6 +310,8 @@ function i(lineNumberCount) {
     if (element && !isLargeFile) { // for some reason focusing here for a large file hangs IE
         element.focus();
     }
+
+    sbApplyConfigFilter(document);
 }
 
 function updateTopHashFromRightPane() {
@@ -363,6 +367,8 @@ function ix(lineNumberCount) {
     if (element && !isLargeFile) { // for some reason focusing here for a large file hangs IE
         element.focus();
     }
+
+    sbApplyConfigFilter(document);
 }
 
 function rewriteExternalLinks() {
@@ -541,6 +547,8 @@ function ro() {
     // References just populated the nav pane; on narrow screens switch to it
     // so the results are visible (matches the search-results flow).
     setMobilePane(true);
+
+    sbApplyConfigFilter(document);
 }
 
 function onDocumentOutlineLoad() {
@@ -1729,10 +1737,20 @@ function trimFromEnd(text, suffixToTrim) {
     return text;
 }
 
+// ConfigFileDeduper (Pass2) disambiguates divergently-rendered config variants by inserting
+// "~" + an 8-hex-digit content hash immediately before the file's extension (e.g.
+// "EnvHelper.cs~87f21542.html" on disk, linked from the client as ".../EnvHelper.cs~87f21542").
+// Strip that suffix before computing the extension so variant URLs are still recognized as
+// files by isFile()/processHash() -- otherwise the trailing hash gets swallowed into a bogus
+// "cs~87f21542" pseudo-extension and the file-redirect branch below is skipped entirely.
+var configVariantSuffixRegex = /~[0-9a-f]{8}$/i;
+
 function getExtension(filePath) {
     if (!filePath) {
         return "";
     }
+
+    filePath = filePath.replace(configVariantSuffixRegex, "");
 
     var dot = filePath.lastIndexOf(".");
     if (dot == filePath.length - 1) {
@@ -1784,3 +1802,300 @@ function switchToContentPaneOnTap(event) {
 }
 
 document.addEventListener("click", switchToContentPaneOnTap, true);
+
+// ----------------------------------------------------------------------------
+// Config selector (#104).
+//
+// NOTE TO REVIEWERS: this DOM-manipulation shell (sbInitConfigSelector,
+// sbApplyConfigFilter, and their helpers below) has been validated by reading
+// and by the standalone pure-function test script
+// (src/HtmlGenerator.Tests/ClientScriptTests/configSelectorFilter.tests.js --
+// see the header comment there for how to run it), NOT by loading it in an actual
+// browser -- there is no browser test harness in the environment this was
+// authored in. Only sbConfigFilterMatches/sbParseConfigList (the decision
+// logic) have been executed and asserted against. A real-browser pass over
+// this file (does the picker render, does clicking it actually grey/ungrey
+// the right elements in each frame, does it survive real navigation) is a
+// known, deliberate gap that must happen before this ships to users.
+//
+// Selection is a FILTER, not a subtree switch: elements tagged data-configs
+// that don't overlap the current selection are greyed (not removed), and an
+// empty/no selection shows everything (the union) -- byte-identical in
+// behavior to a site built without configs when only one config exists,
+// since such a site never has configs.json and sbInitConfigSelector no-ops.
+// ----------------------------------------------------------------------------
+
+var sbConfigSelectorStorageKey = "sourceBrowserSelectedConfigs";
+
+// Pure decision function: does an element tagged with data-configs="..." (or
+// untagged) count as "shown" for the given selection? Kept dependency-free
+// (no DOM access) so it can be executed and asserted against outside a
+// browser -- see configSelectorFilter.tests.js.
+function sbConfigFilterMatches(selectedConfigs, dataConfigsAttr) {
+    // Untagged elements are shared/inert across every config -- always shown.
+    if (!dataConfigsAttr) {
+        return true;
+    }
+
+    // No selection (including a selector that hasn't loaded/initialized yet)
+    // shows everything -- the union, matching a no-config build.
+    if (!selectedConfigs || selectedConfigs.length === 0) {
+        return true;
+    }
+
+    var elementConfigs = sbParseConfigList(dataConfigsAttr);
+    for (var i = 0; i < elementConfigs.length; i++) {
+        for (var j = 0; j < selectedConfigs.length; j++) {
+            if (elementConfigs[i] === selectedConfigs[j]) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+// Splits a "a, b" data-configs attribute value into a trimmed, lower-cased
+// array (["a","b"]). Comparisons throughout this feature are case-insensitive
+// to match the server side's StringComparer.OrdinalIgnoreCase.
+function sbParseConfigList(raw) {
+    if (!raw) {
+        return [];
+    }
+
+    var parts = raw.split(",");
+    var result = [];
+    for (var i = 0; i < parts.length; i++) {
+        var trimmed = parts[i].replace(/^\s+|\s+$/g, "").toLowerCase();
+        if (trimmed.length > 0) {
+            result.push(trimmed);
+        }
+    }
+
+    return result;
+}
+
+function sbGetSelectedConfigs() {
+    try {
+        var raw = window.sessionStorage.getItem(sbConfigSelectorStorageKey);
+        return raw ? sbParseConfigList(raw) : [];
+    } catch (e) {
+        // sessionStorage can throw in some sandboxed/embedded contexts; treat
+        // as "no selection" (show everything) rather than fail the page.
+        return [];
+    }
+}
+
+function sbSetSelectedConfigs(selectedConfigs) {
+    try {
+        window.sessionStorage.setItem(sbConfigSelectorStorageKey, selectedConfigs.join(","));
+    } catch (e) {
+        // Best-effort persistence only; filtering still works for the
+        // lifetime of the current page even if this throws.
+    }
+}
+
+// DOM-application half: greys/ungreys every data-configs-tagged element under
+// `root` (a Document or element) according to the current selection. Safe to
+// call on any page, tagged or not -- pages with no [data-configs] elements at
+// all (the overwhelming majority when 0/1 configs are registered) simply
+// find nothing to iterate.
+function sbApplyConfigFilter(root) {
+    if (!root || !root.querySelectorAll) {
+        return;
+    }
+
+    var selectedConfigs = sbGetSelectedConfigs();
+    var elements = root.querySelectorAll("[data-configs]");
+    for (var i = 0; i < elements.length; i++) {
+        var element = elements[i];
+        var matches = sbConfigFilterMatches(selectedConfigs, element.getAttribute("data-configs"));
+        if (matches) {
+            element.classList.remove("configFilteredOut");
+        } else {
+            element.classList.add("configFilteredOut");
+        }
+    }
+}
+
+// Re-applies the current selection to every frame that might already have
+// content loaded (called after the user changes the selection in the header).
+// Each frame also re-applies on its own subsequent loads via sbApplyConfigFilter
+// calls already wired into i()/ix()/ro(), so a freshly-navigated frame is
+// correct even without this broadcast.
+function sbReapplyConfigFilterToAllFrames() {
+    try {
+        if (top.s && top.s.document) {
+            sbApplyConfigFilter(top.s.document);
+        }
+    } catch (e) { }
+    try {
+        if (top.n && top.n.document) {
+            sbApplyConfigFilter(top.n.document);
+        }
+    } catch (e) { }
+}
+
+// Bootstraps the header's config-picker UI. No-ops entirely (renders nothing)
+// when configs.json is missing/empty -- i.e. every 0/1-config site, which is
+// the overwhelming majority of real usage -- so those sites see zero visual
+// or behavioral change from this feature existing.
+function sbInitConfigSelector() {
+    var container = document.getElementById("configSelectorContainer");
+    if (!container) {
+        return;
+    }
+
+    var request = new XMLHttpRequest();
+    request.open("GET", "/configs.json", true);
+    request.onload = function () {
+        if (request.status !== 200 || !request.responseText) {
+            return;
+        }
+
+        var configs;
+        try {
+            configs = JSON.parse(request.responseText);
+        } catch (e) {
+            return;
+        }
+
+        if (!configs || configs.length < 2) {
+            // Fewer than 2 registered configs -- nothing to select between.
+            return;
+        }
+
+        sbRenderConfigSelectorUI(container, configs);
+    };
+    // A missing configs.json (single/no-config site) is the common case and
+    // simply leaves the container empty -- no error handling needed beyond
+    // onload checking request.status.
+    request.send();
+}
+
+function sbRenderConfigSelectorUI(container, configs) {
+    var selectedConfigs = sbGetSelectedConfigs();
+    container.innerHTML = "";
+
+    var label = document.createElement("span");
+    label.className = "configSelectorLabel";
+    label.appendChild(document.createTextNode("Configs:"));
+    container.appendChild(label);
+
+    for (var i = 0; i < configs.length; i++) {
+        (function (configName) {
+            var lowerConfigName = configName.toLowerCase();
+            var checkboxId = "configSelector_" + lowerConfigName;
+
+            var checkbox = document.createElement("input");
+            checkbox.type = "checkbox";
+            checkbox.id = checkboxId;
+            checkbox.className = "configSelectorCheckbox";
+            checkbox.checked = selectedConfigs.length === 0 || sbContains(selectedConfigs, lowerConfigName);
+            checkbox.onchange = function () {
+                sbOnConfigSelectionChanged(configs, container);
+            };
+
+            var checkboxLabel = document.createElement("label");
+            checkboxLabel.htmlFor = checkboxId;
+            checkboxLabel.appendChild(document.createTextNode(configName));
+
+            container.appendChild(checkbox);
+            container.appendChild(checkboxLabel);
+        })(configs[i]);
+    }
+}
+
+function sbContains(array, value) {
+    for (var i = 0; i < array.length; i++) {
+        if (array[i] === value) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// When every checkbox is checked (or the user has unchecked back down to
+// none), that's equivalent to "no selection" -- store an empty selection so
+// the filter's "no selection shows everything" rule applies, rather than
+// persisting a selection that happens to equal the full set.
+function sbOnConfigSelectionChanged(configs, container) {
+    var checkboxes = container.querySelectorAll(".configSelectorCheckbox");
+    var checkedConfigs = [];
+    var uncheckedCount = 0;
+    for (var i = 0; i < checkboxes.length; i++) {
+        if (checkboxes[i].checked) {
+            checkedConfigs.push(configs[i].toLowerCase());
+        } else {
+            uncheckedCount++;
+        }
+    }
+
+    sbSetSelectedConfigs(uncheckedCount === 0 ? [] : checkedConfigs);
+    sbReapplyConfigFilterToAllFrames();
+    sbTryAutoNavigateToVariant(uncheckedCount === 0 ? [] : checkedConfigs);
+}
+
+// When the selection narrows to EXACTLY one config, and the source frame is
+// currently showing a file with a config-file-variant banner (StageDivergent
+// lyRenderedFiles' output -- a file whose #if-guarded content differs per
+// config, rendered as separate physical pages), jump straight to that
+// config's variant instead of leaving the user to click the banner link
+// manually. This is the practical way to get the effect of "the #if region
+// toggles with the selector": each config's branch is a real, independently-
+// compiled page (Roslyn's inactive-region classification isn't something a
+// single page can re-derive live), so "toggling" means navigating to the
+// already-rendered page for that branch, not rewriting DOM in place.
+//
+// No-ops (leaves today's manual-click behavior) when: more/fewer than one
+// config is selected, the current file has no variant banner at all (the
+// overwhelming majority of files), or the frame/document isn't reachable for
+// any reason -- this is a convenience on top of the filter, never a
+// requirement for the filter to still work correctly.
+function sbTryAutoNavigateToVariant(selectedConfigs) {
+    if (!selectedConfigs || selectedConfigs.length !== 1) {
+        return;
+    }
+
+    try {
+        var sourceDocument = top.s && top.s.document;
+        if (!sourceDocument) {
+            return;
+        }
+
+        var links = sourceDocument.querySelectorAll(".configFileVariantLink[data-configs]");
+        if (!links || links.length === 0) {
+            return;
+        }
+
+        var target = selectedConfigs[0];
+        for (var i = 0; i < links.length; i++) {
+            var elementConfigs = sbParseConfigList(links[i].getAttribute("data-configs"));
+            if (!sbContains(elementConfigs, target)) {
+                continue;
+            }
+
+            var anchor = links[i].getElementsByTagName("a")[0];
+            var href = anchor && anchor.getAttribute("href");
+            var hashIndex = href ? href.indexOf("#") : -1;
+            if (hashIndex < 0) {
+                return;
+            }
+
+            // Route through the same hash the banner's target="_top" link would
+            // navigate to, so this reuses processHash()'s existing frame-
+            // navigation (source AND nav-pane sync) instead of duplicating it.
+            var newHash = href.slice(hashIndex + 1);
+            if (top.location.hash.slice(1) !== newHash) {
+                top.location.hash = newHash;
+            }
+
+            return;
+        }
+    } catch (e) {
+        // Best-effort only -- cross-frame access can throw during unusual
+        // timing (e.g. a frame mid-navigation); fall back to the manual
+        // banner-click path rather than failing the selection change.
+    }
+}

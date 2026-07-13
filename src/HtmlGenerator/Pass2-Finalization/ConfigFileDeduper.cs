@@ -90,11 +90,20 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         /// Assigns the physical file path each variant should be written to. When there is exactly one
         /// variant (the fully-shared or single-config case), it keeps <paramref name="originalPath"/>
         /// unchanged -- the explicit back-compat requirement. When a file genuinely diverges into
-        /// multiple variants, the first (by content hash, for determinism) keeps the original path and
-        /// the rest get a short hash suffix, so existing links into the "primary" rendering keep working
-        /// and only the divergent alternates need a distinct name.
+        /// multiple variants, one keeps the original path and the rest get a short hash suffix, so
+        /// existing links into the "original" rendering keep working and only the divergent alternates
+        /// need a distinct name.
         /// </summary>
-        public static void AssignPhysicalPaths(string originalPath, IReadOnlyList<FileVariant> variants)
+        /// <param name="preferredConfig">
+        /// Optional. When given and some variant's <see cref="FileVariant.Configs"/> contains it, THAT
+        /// variant keeps <paramref name="originalPath"/>, regardless of hash order. This matters because
+        /// a caller like <see cref="ConfigAwareProjectFinalizer"/> may already have the primary config's
+        /// rendering staged at <paramref name="originalPath"/> from an earlier, unconditional copy step
+        /// -- picking any other variant for that path would silently swap out content that was already
+        /// correctly there. Null (the default) preserves the original hash-order tie-break, unchanged
+        /// for every existing caller/test.
+        /// </param>
+        public static void AssignPhysicalPaths(string originalPath, IReadOnlyList<FileVariant> variants, string preferredConfig = null)
         {
             if (variants == null || variants.Count == 0)
             {
@@ -108,6 +117,18 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             }
 
             var ordered = variants.OrderBy(v => v.ContentHash, StringComparer.Ordinal).ToList();
+
+            if (preferredConfig != null)
+            {
+                var preferredIndex = ordered.FindIndex(v => v.Configs.Contains(preferredConfig));
+                if (preferredIndex > 0)
+                {
+                    var preferred = ordered[preferredIndex];
+                    ordered.RemoveAt(preferredIndex);
+                    ordered.Insert(0, preferred);
+                }
+            }
+
             var extension = System.IO.Path.GetExtension(originalPath);
             var withoutExtension = Paths.StripExtension(originalPath);
 

@@ -79,5 +79,103 @@ namespace HtmlGenerator.Tests
             var content = File.ReadAllText(DisambiguationFilePath("abc123"));
             content.ShouldNotContain("partialTypeConfigTag");
         }
+
+        [TestMethod]
+        public void Omitting_allConfigs_renders_byte_identically_to_the_five_argument_overload()
+        {
+            // Back-compat: passing configTagsByFilePath without allConfigs (the pre-existing overload)
+            // must render exactly what the six-argument overload renders when allConfigs is null.
+            var filePaths = new[] { "Environment.Windows.cs", "Environment.Unix.cs" };
+            var configTags = new Dictionary<string, IEnumerable<string>>
+            {
+                ["Environment.Windows.cs"] = new[] { "windows" },
+                ["Environment.Unix.cs"] = new[] { "linux", "mac" },
+            };
+
+            Markup.GeneratePartialTypeDisambiguationFile(testRoot, testRoot, "envnewline", filePaths, configTags);
+            var fiveArg = File.ReadAllText(DisambiguationFilePath("envnewline"));
+            File.Delete(DisambiguationFilePath("envnewline"));
+
+            Markup.GeneratePartialTypeDisambiguationFile(testRoot, testRoot, "envnewline", filePaths, configTags, allConfigs: null);
+            var sixArgNullAllConfigs = File.ReadAllText(DisambiguationFilePath("envnewline"));
+
+            sixArgNullAllConfigs.ShouldBe(fiveArg);
+            sixArgNullAllConfigs.ShouldNotContain("data-configs");
+        }
+
+        [TestMethod]
+        public void DataConfigs_attribute_is_emitted_for_a_link_that_does_not_cover_every_registered_config()
+        {
+            var filePaths = new[] { "Environment.Windows.cs", "Environment.Unix.cs" };
+            var configTags = new Dictionary<string, IEnumerable<string>>
+            {
+                ["Environment.Windows.cs"] = new[] { "windows" },
+                ["Environment.Unix.cs"] = new[] { "linux", "mac" },
+            };
+            var allConfigs = new[] { "windows", "linux", "mac" };
+
+            Markup.GeneratePartialTypeDisambiguationFile(testRoot, testRoot, "envnewline", filePaths, configTags, allConfigs);
+
+            var content = File.ReadAllText(DisambiguationFilePath("envnewline"));
+            content.ShouldContain("data-configs=\"windows\"");
+            content.ShouldContain("data-configs=\"linux,mac\"");
+            // Visible tag untouched alongside the new attribute.
+            content.ShouldContain("[windows]");
+            content.ShouldContain("[linux, mac]");
+        }
+
+        [TestMethod]
+        public void DataConfigs_attribute_is_omitted_for_a_link_that_covers_every_registered_config()
+        {
+            // A location present under every registered config is fully shared/inert -- tagging it
+            // would be noise the client selector would have to filter as "always shown" anyway.
+            var filePaths = new[] { "Foo.cs" };
+            var configTags = new Dictionary<string, IEnumerable<string>>
+            {
+                ["Foo.cs"] = new[] { "windows", "linux" },
+            };
+            var allConfigs = new[] { "windows", "linux" };
+
+            Markup.GeneratePartialTypeDisambiguationFile(testRoot, testRoot, "abc123", filePaths, configTags, allConfigs);
+
+            var content = File.ReadAllText(DisambiguationFilePath("abc123"));
+            content.ShouldNotContain("data-configs");
+        }
+
+        [TestMethod]
+        public void Config_aware_render_includes_scripts_and_the_config_filter_onload()
+        {
+            // The config-selector's data-configs attributes are inert without the client filter script
+            // actually running on this page -- so a config-aware render must include scripts.js and
+            // call sbApplyConfigFilter on load, unlike the ordinary single/no-config disambiguation page.
+            var filePaths = new[] { "Environment.Windows.cs", "Environment.Unix.cs" };
+            var configTags = new Dictionary<string, IEnumerable<string>>
+            {
+                ["Environment.Windows.cs"] = new[] { "windows" },
+                ["Environment.Unix.cs"] = new[] { "linux" },
+            };
+            var allConfigs = new[] { "windows", "linux" };
+
+            Markup.GeneratePartialTypeDisambiguationFile(testRoot, testRoot, "envnewline", filePaths, configTags, allConfigs);
+
+            var content = File.ReadAllText(DisambiguationFilePath("envnewline"));
+            content.ShouldContain("scripts.js\"></script>");
+            content.ShouldContain("onload=\"sbApplyConfigFilter(document);\"");
+        }
+
+        [TestMethod]
+        public void Single_config_render_never_includes_the_config_filter_script()
+        {
+            // allConfigs null/empty is the ordinary single/no-config path -- must stay exactly as
+            // before this feature existed, with no new script tag or onload.
+            var filePaths = new[] { "Foo.cs", "Foo.Partial.cs" };
+
+            Markup.GeneratePartialTypeDisambiguationFile(testRoot, testRoot, "abc123", filePaths);
+
+            var content = File.ReadAllText(DisambiguationFilePath("abc123"));
+            content.ShouldNotContain("scripts.js");
+            content.ShouldNotContain("sbApplyConfigFilter");
+            content.ShouldNotContain("onload");
+        }
     }
 }

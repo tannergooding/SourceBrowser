@@ -919,6 +919,50 @@ a i {
     padding: 18px;
 }
 
+/*
+ * Config selector (#104). Empty and invisible on any site with fewer than 2
+ * registered configs -- sbInitConfigSelector (scripts.js) never populates it
+ * in that case, so this rule has no visible effect on the overwhelming
+ * majority of real sites.
+ */
+#configSelectorContainer {
+    display: inline-block;
+    color: white;
+    font-size: 12px;
+    vertical-align: top;
+    margin-top: 22px;
+    margin-left: 10px;
+}
+
+.configSelectorLabel {
+    margin-right: 4px;
+}
+
+.configSelectorCheckbox {
+    vertical-align: middle;
+}
+
+/* Applied/removed at runtime by sbApplyConfigFilter (scripts.js) to elements
+   carrying data-configs that don't overlap the current selection. */
+.configFilteredOut {
+    color: lightgray;
+    opacity: 0.5;
+}
+
+/* Switcher banner injected at the top of a file whose rendered content genuinely differs by
+   config (ConfigFileDeduper's "shared-render-divergent" bucket); each link is its own
+   data-configs-tagged span so the selector greys out configs the reader hasn't selected. */
+.configFileVariantBanner {
+    background-color: #fff8dc;
+    border-bottom: 1px solid #e0c060;
+    padding: 4px 8px;
+    font-size: 12px;
+}
+
+.configFileVariantLink {
+    margin-right: 8px;
+}
+
 /* Narrow-screen single-pane toggle; only shown at the <=700px breakpoint. */
 #paneToggle {
     display: none;

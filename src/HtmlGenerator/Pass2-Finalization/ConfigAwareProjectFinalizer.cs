@@ -145,12 +145,15 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
     ///    <c>mergedDivergentReferencesByAssembly</c>/<c>configsByAssembly</c> parameters, which flow all
     ///    the way to <see cref="ProjectFinalizer.GenerateMergedReferencesFragments"/>).
     ///
-    /// Deliberately NOT yet in scope (tracked as a separate follow-up, not silently dropped, per the
-    /// enumeration above): re-rendering a file whose content genuinely differs across configs at the
-    /// SAME relative path (<see cref="ConfigFileDeduper"/>'s "shared-render-divergent" bucket -- see
-    /// <see cref="StageDivergentlyPathedFiles"/>'s remarks for why). Until that lands, such a file's
-    /// content reflects only the primary config; declarations and FAR entries are already fully
-    /// cross-config-merged (see items above).
+    /// A file that exists at the SAME relative path in two or more configs but renders DIFFERENT
+    /// content (<see cref="ConfigFileDeduper"/>'s "shared-render-divergent" bucket) -- FIXED,
+    /// <see cref="StageDivergentlyRenderedFiles"/>: now that the client config selector exists (see
+    /// scripts.js) to give a reader a way to actually reach a non-chosen variant, every distinct
+    /// rendering is staged as its own physical page (the primary config's own rendering keeps the
+    /// file's ordinary URL, preserving the single-config byte-identical invariant), and every page for
+    /// such a file gets a small config-tagged switcher banner so the selector has something concrete to
+    /// grey/hide between. A file whose rendering is identical across every config it exists under is
+    /// left completely untouched.
     /// </summary>
     public static class ConfigAwareProjectFinalizer
     {
@@ -177,6 +180,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                     configObjRoots, primaryConfig, stagingRoot, projectNames, out var mergedDivergentReferencesByAssembly, out var configsByAssembly);
                 StageNonPrimaryOnlyProjects(configObjRoots, primaryConfig, stagingRoot, projectNames);
                 StageDivergentlyPathedFiles(configObjRoots, primaryConfig, stagingRoot, projectNames);
+                StageDivergentlyRenderedFiles(configObjRoots, primaryConfig, stagingRoot, projectNames);
 
                 var mergedSolutionExplorerRoot = ComputeMergedSolutionExplorerRoot(configObjRoots, primaryConfig, projectNames);
 
@@ -207,6 +211,23 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
             PatchCrossConfigUsedByAndAggregates(configObjRoots, websiteDestinationFolder);
             RewritePartialTypeDisambiguationPages(configObjRoots, websiteDestinationFolder, projectNames);
+            WriteRegisteredConfigsForClient(configObjRoots.Keys, websiteDestinationFolder);
+        }
+
+        /// <summary>
+        /// Writes <see cref="Constants.RegisteredConfigsFileName"/> at the website root -- the one piece
+        /// of config metadata the merged site needs to expose to the BROWSER (everything else discussed
+        /// in this type's remarks is server-side merge logic). The client config-selector fetches this
+        /// to know which configs exist, so it can render its picker; its absence (single/no-config sites
+        /// never call this method at all) is how the selector's bootstrap script knows to render
+        /// nothing rather than a single-option no-op UI. Hand-written as a minimal JSON array rather
+        /// than pulling in a serializer for two lines of output.
+        /// </summary>
+        private static void WriteRegisteredConfigsForClient(IEnumerable<string> configs, string websiteDestinationFolder)
+        {
+            var orderedConfigs = configs.OrderBy(c => c, StringComparer.OrdinalIgnoreCase).ToList();
+            var json = "[" + string.Join(",", orderedConfigs.Select(c => "\"" + c.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"")) + "]";
+            File.WriteAllText(Path.Combine(websiteDestinationFolder, Constants.RegisteredConfigsFileName), json, Encoding.UTF8);
         }
 
         /// <summary>
@@ -437,11 +458,9 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         /// Deliberately NOT handled here: a file that exists under the SAME relative path in two or
         /// more configs but renders DIFFERENT content (e.g. an `#if WINDOWS` region that changes what's
         /// classified/linked) -- that's <see cref="ConfigFileDeduper"/>'s "shared-render-divergent"
-        /// bucket, and picking which config's rendering to keep as the one physical page (or serving
-        /// multiple tagged variants) only makes sense once there's a way to reach the non-chosen
-        /// variant -- the still-deferred client selector, or some other discovery mechanism. Wiring
-        /// variant output with no way to reach it would just be dead, untestable content, so that
-        /// bucket stays a tracked follow-up rather than being guessed at here.
+        /// bucket, handled separately by <see cref="StageDivergentlyRenderedFiles"/> once this method has
+        /// finished filling in every divergently-PATHED file (so that method sees a complete picture of
+        /// which relative paths exist under which configs).
         /// </summary>
         private static void StageDivergentlyPathedFiles(
             IReadOnlyDictionary<string, string> configObjRoots,
@@ -529,6 +548,159 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         }
 
         /// <summary>
+        /// Wires <see cref="ConfigFileDeduper"/>'s "shared-render-divergent" bucket into the staged
+        /// merge input: a source file that exists at the SAME relative path under two or more
+        /// registered configs (by the time this runs, every config's project folder that has this
+        /// project at all has this path filled in, thanks to <see cref="StageDivergentlyPathedFiles"/>
+        /// running first) but whose Pass1-rendered HTML genuinely differs between them -- typically an
+        /// "#if"-gated region whose active branch differs by config.
+        ///
+        /// The staged copy already has the PRIMARY config's own rendering at the file's ordinary path
+        /// (an untouched copy from the primary config's own obj/&lt;config&gt; folder) -- that invariant
+        /// is preserved explicitly here by pinning the primary config's variant to the original path via
+        /// <see cref="ConfigFileDeduper.AssignPhysicalPaths"/>'s <c>preferredConfig</c> parameter, rather
+        /// than letting an arbitrary hash-order tie-break potentially swap in a different config's
+        /// content at a URL that already existed before this method ran. Every OTHER distinct rendering
+        /// is written to its own new, deterministically-suffixed physical page. <see cref="ProjectFinalizer"/>'s
+        /// constructor copies a project's ENTIRE staged folder wholesale into the website output, so
+        /// these extra staged files reach the final site without any further plumbing.
+        ///
+        /// Every physical page for a divergent file gets a small config-tagged switcher banner inserted
+        /// right after its existing file/project link panel (<see cref="InsertConfigVariantBanner"/>),
+        /// tagged with <c>data-configs</c> exactly like declaration and FAR entries, so the client
+        /// selector -- which per its locked scope reads <c>data-configs</c> on declarations, FAR entries,
+        /// AND divergent files -- has something concrete to grey/hide between and a link to actually
+        /// reach the other variant(s).
+        ///
+        /// A file whose rendering is IDENTICAL across every config it exists under (the overwhelmingly
+        /// common case) is left completely untouched: no banner, no extra variant, byte-identical to
+        /// today's single-config output.
+        ///
+        /// Known, deliberately-accepted limitation: the per-symbol "unreferenced declaration" backpatch
+        /// (<c>ProjectFinalizer.Declarations.cs</c>) still only ever touches the file staged at each
+        /// symbol's DeclarationMap.txt-listed location, i.e. the PRIMARY variant written by earlier
+        /// staging steps -- a non-primary variant produced here reflects only that one config's own
+        /// local backpatch decision from Pass1, same as the existing, established limitation for
+        /// non-primary-only projects/files (see <see cref="StageNonPrimaryOnlyProjects"/>): "there is no
+        /// cross-config choice to make here" beyond what's already fixed for declarations/FAR/Used-By.
+        /// </summary>
+        private static void StageDivergentlyRenderedFiles(
+            IReadOnlyDictionary<string, string> configObjRoots,
+            string primaryConfig,
+            string stagingRoot,
+            IReadOnlyList<string> projectNames)
+        {
+            var orderedConfigs = configObjRoots.Keys.OrderBy(c => c, StringComparer.Ordinal).ToArray();
+
+            foreach (var assemblyId in projectNames)
+            {
+                var primaryProjectFolder = Path.Combine(configObjRoots[primaryConfig], assemblyId);
+                if (!Directory.Exists(primaryProjectFolder))
+                {
+                    // Handled wholesale by StageNonPrimaryOnlyProjects -- no primary rendering exists to
+                    // compare anything else against.
+                    continue;
+                }
+
+                var stagedProjectFolder = Path.Combine(stagingRoot, assemblyId);
+
+                foreach (var relativePath in EnumerateContentFileRelativePaths(primaryProjectFolder))
+                {
+                    Dictionary<string, string> perConfigContent = null;
+
+                    foreach (var config in orderedConfigs)
+                    {
+                        var candidatePath = Path.Combine(configObjRoots[config], assemblyId, relativePath);
+                        if (!File.Exists(candidatePath))
+                        {
+                            continue;
+                        }
+
+                        perConfigContent ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                        perConfigContent[config] = File.ReadAllText(candidatePath);
+                    }
+
+                    if (perConfigContent == null || perConfigContent.Count < 2)
+                    {
+                        // Only one config actually has this exact path -- nothing to compare against.
+                        continue;
+                    }
+
+                    var variants = ConfigFileDeduper.Dedupe(perConfigContent);
+                    if (variants.Count == 1)
+                    {
+                        // Fully shared rendering -- already correct at the original path, untouched.
+                        continue;
+                    }
+
+                    ConfigFileDeduper.AssignPhysicalPaths(relativePath, variants, preferredConfig: primaryConfig);
+
+                    foreach (var variant in variants)
+                    {
+                        var contentWithBanner = InsertConfigVariantBanner(variant.Content, assemblyId, variants);
+                        var destinationPath = Path.Combine(stagedProjectFolder, variant.PhysicalPath);
+                        Directory.CreateDirectory(Path.GetDirectoryName(destinationPath));
+                        File.WriteAllText(destinationPath, contentWithBanner, Encoding.UTF8);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Builds the hash-routed URL (the same "/#assembly/path" scheme <c>DocumentGenerator</c> uses
+        /// for its own file link) for one variant's physical page, and inserts a small switcher banner
+        /// listing every variant right after the divergent file's existing file/project link panel
+        /// (the first "&lt;/div&gt;" in the rendered page -- <c>Markup.WriteLinkPanel</c>'s closing tag,
+        /// always the first div closed since it's the very first thing a rendered document writes).
+        /// Each variant gets its own <c>data-configs</c>-tagged span so the client selector can grey out
+        /// links to configs the reader hasn't selected, exactly like declaration/FAR tags.
+        /// </summary>
+        private static string InsertConfigVariantBanner(
+            string content,
+            string assemblyId,
+            IReadOnlyList<ConfigFileDeduper.FileVariant> variants)
+        {
+            var links = variants.Select(variant =>
+            {
+                var configList = string.Join(",", variant.Configs.OrderBy(c => c, StringComparer.OrdinalIgnoreCase));
+                var label = System.Net.WebUtility.HtmlEncode(configList);
+                var url = BuildVariantDocumentUrl(assemblyId, variant.PhysicalPath);
+
+                return string.Format(
+                    "<span class=\"configFileVariantLink\" data-configs=\"{0}\"><a class=\"blueLink\" href=\"{1}\" target=\"_top\">{2}</a></span>",
+                    System.Net.WebUtility.HtmlEncode(configList),
+                    url,
+                    label);
+            });
+
+            var banner = "<div class=\"configFileVariantBanner\">This file's content differs by config: " + string.Join(" | ", links) + "</div>";
+
+            var insertionPoint = content.IndexOf("</div>", StringComparison.Ordinal);
+            if (insertionPoint < 0)
+            {
+                // Shouldn't happen for any real rendered document page, but never corrupt content we
+                // can't safely patch.
+                return content;
+            }
+
+            insertionPoint += "</div>".Length;
+            return content.Insert(insertionPoint, banner);
+        }
+
+        private static string BuildVariantDocumentUrl(string assemblyId, string physicalRelativePath)
+        {
+            var withoutExtension = physicalRelativePath.EndsWith(".html", StringComparison.OrdinalIgnoreCase)
+                ? physicalRelativePath.Substring(0, physicalRelativePath.Length - ".html".Length)
+                : physicalRelativePath;
+
+            var urlPath = withoutExtension
+                .Replace(Path.DirectorySeparatorChar, '/')
+                .Replace(Path.AltDirectorySeparatorChar, '/');
+
+            return "/#" + assemblyId + "/" + urlPath;
+        }
+
+        /// <summary>
         /// Re-renders the partial-type/member disambiguation page for every symbol whose merged
         /// (cross-config) declaration-location set is genuinely divergent -- i.e. NOT
         /// <see cref="ConfigLocationMerger.IsFullyShared"/>, meaning at least one location doesn't exist
@@ -590,7 +762,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                         projectDestinationFolder,
                         symbolId,
                         configTagsByFilePath.Keys,
-                        configTagsByFilePath);
+                        configTagsByFilePath,
+                        merged.Configs);
                 }
             }
         }

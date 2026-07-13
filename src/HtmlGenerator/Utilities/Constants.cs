@@ -76,5 +76,16 @@
         /// be skipped entirely.
         /// </summary>
         public static readonly string StalenessKeyFileName = "StalenessKey";
+
+        /// <summary>
+        /// Written at the root of the merged <c>index/</c> website output (NOT the same file as
+        /// <see cref="ConfigRegistry.ConfigsFileName"/>, which lives one level up in the run's private
+        /// /out root and is never servable) so the client config-selector can discover, at runtime, which
+        /// configs the current site was merged from. A simple JSON array of config names, e.g.
+        /// <c>["linux","windows"]</c>. Only ever written by <see cref="ConfigAwareProjectFinalizer.Finalize"/>
+        /// (i.e. only for a 2+-config merge); a single/no-config site never has this file, which is how
+        /// the client selector knows to render nothing rather than an empty/single-option UI.
+        /// </summary>
+        public static readonly string RegisteredConfigsFileName = "configs.json";
     }
 }

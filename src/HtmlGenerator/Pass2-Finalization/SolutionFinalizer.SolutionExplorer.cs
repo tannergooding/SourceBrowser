@@ -58,21 +58,21 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             {
                 foreach (var project in folder.Items)
                 {
-                    WriteProject(project.AssemblyName, writer);
+                    WriteProject(project.AssemblyName, project.RepoName, writer);
                 }
             }
         }
 
-        private void WriteProject(string assemblyName, StreamWriter writer)
+        private void WriteProject(string assemblyName, string repoName, StreamWriter writer)
         {
-            var projectExplorerText = GetProjectExplorerText(assemblyName);
+            var projectExplorerText = GetProjectExplorerText(assemblyName, repoName);
             if (!string.IsNullOrEmpty(projectExplorerText))
             {
                 writer.WriteLine(projectExplorerText);
             }
         }
 
-        private string GetProjectExplorerText(string assemblyName)
+        private string GetProjectExplorerText(string assemblyName, string repoName)
         {
             var fileName = Path.Combine(SolutionDestinationFolder, assemblyName, Constants.ProjectExplorer + ".html");
             if (!File.Exists(fileName))
@@ -86,7 +86,24 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             var end = text.IndexOf("<script>", StringComparison.Ordinal);
             text = text.Substring(start, end - start);
             text = "<div" + text;
-            text = text.Replace("</div><div>", string.Format("</div><div class=\"folder\" data-assembly=\"{0}\">", assemblyName));
+
+            // Only add a data-repo attribute (and thus a client-side filtering hook) when the site
+            // actually has a repo tag -- keeps the untagged/single-repo output identical to before
+            // repo tagging existed.
+            var folderAttributes = string.IsNullOrEmpty(repoName)
+                ? string.Format("class=\"folder\" data-assembly=\"{0}\"", assemblyName)
+                : string.Format("class=\"folder\" data-assembly=\"{0}\" data-repo=\"{1}\"", assemblyName, repoName);
+            text = text.Replace("</div><div>", string.Format("</div><div {0}>", folderAttributes));
+
+            // The project title (the always-visible "Project2"-style line) is a sibling that comes
+            // before the folder div patched above, not a child of it -- so it needs its own
+            // data-repo attribute or hiding the folder above leaves the title behind in the list.
+            if (!string.IsNullOrEmpty(repoName))
+            {
+                text = text.Replace("class=\"projectCS\"", string.Format("class=\"projectCS\" data-repo=\"{0}\"", repoName));
+                text = text.Replace("class=\"projectVB\"", string.Format("class=\"projectVB\" data-repo=\"{0}\"", repoName));
+            }
+
             text = text.Replace("projectCS", "projectCSInSolution");
             text = text.Replace("projectVB", "projectVBInSolution");
 

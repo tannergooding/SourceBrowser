@@ -169,11 +169,12 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
                 await Task.WhenAll(generationTasks);
 
-                // Fold the per-partition collectors into the shared map now that all Tasks have
+                // Fold the per-partition collectors into the shared maps now that all Tasks have
                 // completed, so the merge runs single-threaded and needs no locking.
                 foreach (var collector in collectors)
                 {
                     MergeReferences(collector);
+                    MergeDeclarations(collector);
                 }
 
                 foreach (var document in documents)

@@ -31,6 +31,10 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             var locationsToPatch = new Dictionary<string, List<long>>();
             GetLocationsToPatch(referencesFolder, locationsToPatch, symbolIDToListOfLocationsMap);
             Patch(locationsToPatch);
+
+            // The map is a Pass1 intermediate consumed only here, so drop it rather than leaving tens
+            // of MB per assembly in the served output where it would also be directly downloadable.
+            File.Delete(declarationMapFile);
         }
 
         private void GetLocationsToPatch(string referencesFolder, Dictionary<string, List<long>> locationsToPatch, Dictionary<string, List<Tuple<string, long>>> symbolIDToListOfLocationsMap)
@@ -118,8 +122,6 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             var result = new Dictionary<string, List<Tuple<string, long>>>();
 
             var lines = File.ReadAllLines(declarationMapFile);
-
-            //File.Delete(declarationMapFile);
 
             List<Tuple<string, long>> bucket = null;
             string symbolId = null;

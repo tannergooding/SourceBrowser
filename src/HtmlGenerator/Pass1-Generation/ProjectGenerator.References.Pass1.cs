@@ -18,16 +18,30 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         public IEnumerable<string> UsedReferences { get; private set; }
 
         /// <summary>
-        /// Lock-free, per-partition accumulator for references. Each partition Task processes its
-        /// documents sequentially, so a single collector is only ever touched by one document at a
-        /// time and needs no synchronization. The collectors are merged into
-        /// <see cref="ReferencesByTargetAssemblyAndSymbolId"/> single-threaded once generation completes,
-        /// which avoids contending a project-global lock on the per-reference hot path.
+        /// Lock-free, per-partition accumulator for the data a document contributes to the project --
+        /// references as well as declared symbols, redirect-map locations, base members and implemented
+        /// interface members. Each partition Task processes its documents sequentially, so a single
+        /// collector is only ever touched by one document at a time and needs no synchronization. The
+        /// collectors are merged into the project-wide maps single-threaded once generation completes
+        /// (see <see cref="MergeReferences"/> and <see cref="MergeDeclarations"/>), which avoids
+        /// contending project-global locks on the per-symbol hot path.
         /// </summary>
         public sealed class ReferenceCollector
         {
             public readonly Dictionary<string, Dictionary<string, List<Reference>>> ReferencesByTargetAssemblyAndSymbolId =
                 new Dictionary<string, Dictionary<string, List<Reference>>>();
+
+            public readonly Dictionary<ISymbol, string> DeclaredSymbols =
+                new Dictionary<ISymbol, string>(SymbolEqualityComparer.Default);
+
+            public readonly Dictionary<string, List<Tuple<string, long>>> SymbolIDToListOfLocationsMap =
+                new Dictionary<string, List<Tuple<string, long>>>();
+
+            public readonly Dictionary<ISymbol, ISymbol> BaseMembers =
+                new Dictionary<ISymbol, ISymbol>(SymbolEqualityComparer.Default);
+
+            public readonly MultiDictionary<ISymbol, ISymbol> ImplementedInterfaceMembers =
+                new MultiDictionary<ISymbol, ISymbol>();
 
             public void Add(string toAssemblyId, string toSymbolId, Reference reference)
             {
@@ -44,6 +58,37 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 }
 
                 referencesToSymbol.Add(reference);
+            }
+
+            public void AddDeclaredSymbolLocation(string symbolId, string documentRelativeFilePath, long positionInFile)
+            {
+                if (!SymbolIDToListOfLocationsMap.TryGetValue(symbolId, out var bucket))
+                {
+                    bucket = new List<Tuple<string, long>>();
+                    SymbolIDToListOfLocationsMap.Add(symbolId, bucket);
+                }
+
+                bucket.Add(Tuple.Create(documentRelativeFilePath, positionInFile));
+            }
+
+            public void AddBaseMember(ISymbol member, ISymbol baseMember)
+            {
+                BaseMembers[member] = baseMember;
+            }
+
+            public void AddImplementedInterfaceMember(ISymbol implementationMember, ISymbol interfaceMember)
+            {
+                if (implementationMember == null)
+                {
+                    throw new ArgumentNullException(nameof(implementationMember));
+                }
+
+                if (interfaceMember == null)
+                {
+                    throw new ArgumentNullException(nameof(interfaceMember));
+                }
+
+                ImplementedInterfaceMembers.Add(implementationMember, interfaceMember);
             }
         }
 

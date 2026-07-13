@@ -74,8 +74,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
             // add the file itself as a "declared symbol", so that clicking on document in search
             // results redirects to the document
-            ProjectGenerator.AddDeclaredSymbolToRedirectMap(
-                this.projectGenerator.SymbolIDToListOfLocationsMap,
+            referenceCollector.AddDeclaredSymbolLocation(
                 SymbolIdService.GetId(this.Document),
                 documentRelativeFilePathWithoutHtmlExtension,
                 0);
@@ -388,7 +387,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                     hyperlinkInfo.DeclaredSymbol,
                     hyperlinkInfo.DeclaredSymbolId,
                     documentRelativeFilePathWithoutHtmlExtension,
-                    streamPosition);
+                    streamPosition,
+                    referenceCollector);
             }
 
             return html;
@@ -409,7 +409,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                             implicitInstanceConstructor,
                             symbolId,
                             documentRelativeFilePathWithoutHtmlExtension,
-                            0);
+                            0,
+                            referenceCollector);
                     }
                 }
             }

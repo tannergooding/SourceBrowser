@@ -401,6 +401,23 @@ a i {
     padding-bottom: 1px;
 }
 
+/* Repo/Solution grouping nodes only appear in the Solution Explorer tree when a merged site spans
+   more than one repo (or, within a repo, more than one solution) -- see Program.IndexSolutionsAsync
+   and SolutionFinalizer.WriteFolder. They get a bolder, tinted treatment so the repo/solution
+   boundaries are visually obvious at a glance, distinct from plain physical folders. */
+.repoTitle {
+    font-weight: bold;
+    background-color: #eef4fb;
+    border-left: 3px solid #4a90d9;
+    padding-left: 4px;
+    margin-left: -4px;
+}
+
+.solutionTitle {
+    font-weight: bold;
+    font-style: italic;
+}
+
 .typeTitle {
     white-space: nowrap;
     padding-top: 1px;
@@ -839,6 +856,14 @@ a i {
    doesn't fight with the folder expand/collapse logic, which also toggles display on the same
    [data-assembly] elements. */
 .repoHidden {
+    display: none !important;
+}
+
+/* Hides a repo grouping header once that repo is the one selected in the filter dropdown (see
+   filterSolutionExplorerByRepo in scripts.js) -- its folder is forced open at the same time, so
+   the tree reads the same as an ungrouped/single-repo site instead of showing an always-selected
+   wrapper around everything the user already scoped to. */
+.repoUnwrapped {
     display: none !important;
 }
 
@@ -1393,6 +1418,11 @@ ol a, ol a:link, ol a:hover, ol a:focus, ol a:active,
     .note {
         background-color: #443;
         border-color: #665;
+    }
+
+    .repoTitle {
+        background-color: #1c2b3d;
+        border-left-color: #4a90d9;
     }
 
     .resultGroupHeader {

@@ -769,6 +769,23 @@ function filterSolutionExplorerByRepo(repo) {
         var hide = !!repo && node.getAttribute("data-repo") !== repo;
         node.classList.toggle("repoHidden", hide);
     }
+
+    // Once scoped to a single repo, that repo's own grouping header (see
+    // Program.GetSolutionExplorerGroupingFolder -- only emitted when the site spans more than one
+    // repo) is redundant: the user already picked it from the dropdown. Unwrap it -- hide the
+    // header label and force its folder open -- so the tree reads the same as an ungrouped site
+    // instead of showing an always-selected wrapper around everything. Other repos' headers are
+    // left alone; they're already fully hidden by the data-repo pass above.
+    var repoTitles = document.querySelectorAll(".repoTitle");
+    for (var i = 0; i < repoTitles.length; i++) {
+        var title = repoTitles[i];
+        var isSelectedRepo = !!repo && title.getAttribute("data-repo") === repo;
+        title.classList.toggle("repoUnwrapped", isSelectedRepo);
+
+        if (isSelectedRepo) {
+            expandFolderIfNeeded(title.nextElementSibling);
+        }
+    }
 }
 
 function onSearchChange() {

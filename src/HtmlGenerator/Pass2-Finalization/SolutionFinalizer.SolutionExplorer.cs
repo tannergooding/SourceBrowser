@@ -48,7 +48,29 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             {
                 foreach (var subfolder in folder.Folders.Values)
                 {
-                    writer.WriteLine(@"<div class=""folderTitle"">{0}</div><div class=""folder"">", subfolder.Name);
+                    // Repo/Solution grouping nodes (see Program.IndexSolutionsAsync) get an extra
+                    // class on their *title* div, so styles.css can style them distinctly, plus a
+                    // data-repo attribute on both divs so the client-side repo filter can hide the
+                    // whole group (not just its individual project items) when it doesn't match.
+                    // The container div's class must stay exactly "folder" -- scripts.js does a
+                    // strict className equality check (not a class-list check) when recursively
+                    // wiring up expand/collapse icons for child folders, so any additional class
+                    // there would silently break icons on repo/solution subfolders' children;
+                    // adding a data-* attribute doesn't affect className, so it's safe.
+                    var titleClass = subfolder.Kind switch
+                    {
+                        FolderKind.Repo => "folderTitle repoTitle",
+                        FolderKind.Solution => "folderTitle solutionTitle",
+                        _ => "folderTitle"
+                    };
+
+                    var dataRepoAttribute = string.IsNullOrEmpty(subfolder.RepoName)
+                        ? ""
+                        : string.Format(" data-repo=\"{0}\"", subfolder.RepoName);
+
+                    writer.WriteLine(
+                        @"<div class=""{0}""{1}>{2}</div><div class=""folder""{1}>",
+                        titleClass, dataRepoAttribute, subfolder.Name);
                     WriteFolder(subfolder, writer);
                     writer.WriteLine("</div>");
                 }

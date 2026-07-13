@@ -159,9 +159,39 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
             var processedAssemblyList = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var path in solutionFilePaths)
+            // Solution tag is auto-derived from each top-level input's file name when it's a
+            // .sln/.slnx; standalone project/binlog inputs aren't part of a solution, so they
+            // stay untagged. Repo tag is resolved by longest-prefix match of each input's folder
+            // against /repoPath (or /repo) mappings; untagged when no mapping applies. Resolve
+            // both up front (rather than per-iteration below) so we know, before building any
+            // folder, whether the merged site actually spans more than one repo/solution.
+            var pathTags = solutionFilePaths
+                .Select(path => (Path: path, RepoName: GetRepoName(path, repoPathMappings), SolutionName: GetSolutionName(path)))
+                .ToList();
+
+            var distinctRepoCount = pathTags
+                .Select(t => t.RepoName)
+                .Where(r => !string.IsNullOrEmpty(r))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count();
+
+            var solutionCountsByRepo = pathTags
+                .Where(t => !string.IsNullOrEmpty(t.RepoName))
+                .GroupBy(t => t.RepoName, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.Select(t => t.SolutionName).Where(s => !string.IsNullOrEmpty(s)).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var (path, repoName, solutionName) in pathTags)
             {
-                var solutionFolder = mergedSolutionExplorerRoot;
+                // Only introduce Repo/Solution grouping folders when the merged site actually has
+                // more than one repo (or, within a repo, more than one solution) to distinguish --
+                // keeps single-repo/untagged sites' Solution Explorer tree byte-identical to before
+                // repo tagging existed. Untagged inputs stay flat at the top level even on a
+                // multi-repo site, alongside the repo folders.
+                var solutionFolder = GetSolutionExplorerGroupingFolder(
+                    mergedSolutionExplorerRoot, repoName, solutionName, distinctRepoCount, solutionCountsByRepo);
 
                 if (rootPath is object)
                 {
@@ -173,13 +203,6 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                         solutionFolder = solutionFolder.GetOrCreateFolder(segment);
                     }
                 }
-
-                // Solution tag is auto-derived from this top-level input's file name when it's a
-                // .sln/.slnx; standalone project/binlog inputs aren't part of a solution, so they
-                // stay untagged. Repo tag is resolved by longest-prefix match of this input's
-                // folder against /repoPath (or /repo) mappings; untagged when no mapping applies.
-                string solutionName = GetSolutionName(path);
-                string repoName = GetRepoName(path, repoPathMappings);
 
                 using (Disposable.Timing("Generating " + path))
                 {
@@ -226,6 +249,38 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 GC.WaitForPendingFinalizers();
                 GC.Collect();
             }
+        }
+
+        /// <summary>Descends into (creating as needed) the Repo/Solution grouping folders for a
+        /// single input, or returns <paramref name="root"/> unchanged when grouping doesn't apply.
+        /// Public and static so it's independently unit-testable without needing a real
+        /// solution/build. See the Solution Explorer tree design note on IndexSolutionsAsync's
+        /// grouping loop for the byte-identical-by-default rationale.</summary>
+        public static Folder<ProjectSkeleton> GetSolutionExplorerGroupingFolder(
+            Folder<ProjectSkeleton> root,
+            string repoName,
+            string solutionName,
+            int distinctRepoCount,
+            IReadOnlyDictionary<string, int> solutionCountsByRepo)
+        {
+            var folder = root;
+
+            if (distinctRepoCount > 1 && !string.IsNullOrEmpty(repoName))
+            {
+                folder = folder.GetOrCreateFolder(repoName);
+                folder.Kind = FolderKind.Repo;
+                folder.RepoName = repoName;
+
+                if (solutionCountsByRepo.TryGetValue(repoName, out var solutionCount) &&
+                    solutionCount > 1 && !string.IsNullOrEmpty(solutionName))
+                {
+                    folder = folder.GetOrCreateFolder(solutionName);
+                    folder.Kind = FolderKind.Solution;
+                    folder.RepoName = repoName;
+                }
+            }
+
+            return folder;
         }
 
         private static string GetSolutionName(string path)

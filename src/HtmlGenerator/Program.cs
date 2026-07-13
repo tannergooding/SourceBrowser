@@ -24,6 +24,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             if (options.Projects.Count == 0)
             {
                 PrintUsage();
+                Log.Close();
                 return 1;
             }
 

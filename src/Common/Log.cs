@@ -17,6 +17,8 @@ namespace Microsoft.SourceBrowser.Common
 
         private static readonly BlockingCollection<IMessage> Messages = new BlockingCollection<IMessage>();
 
+        private static readonly Thread loggerThread;
+
         private static int errorCount;
 
         // Number of severe errors logged so far. HtmlGenerator uses this to return a non-zero exit code
@@ -38,12 +40,12 @@ namespace Microsoft.SourceBrowser.Common
 
         static Log()
         {
-            var thread = new Thread(ProcessMessages)
+            loggerThread = new Thread(ProcessMessages)
             {
                 IsBackground = true,
                 Name = "ThreadLogger",
             };
-            thread.Start();
+            loggerThread.Start();
         }
 
         private static void ProcessMessages()
@@ -157,9 +159,19 @@ namespace Microsoft.SourceBrowser.Common
             set { messageLogFilePath = value.MustBeAbsolute(); }
         }
 
+        // Stop accepting new messages and block until the background thread has drained everything
+        // already queued. The logger thread is a background thread, so without this join a fast exit
+        // (notably argument-validation failures that return before any indexing work) would let the
+        // process terminate before the queued messages are ever written to the console or log files.
+        // See https://github.com/KirillOsenkov/SourceBrowser/issues/165.
         public static void Close()
         {
-            Messages.CompleteAdding();
+            if (!Messages.IsAddingCompleted)
+            {
+                Messages.CompleteAdding();
+            }
+
+            loggerThread.Join();
         }
     }
 

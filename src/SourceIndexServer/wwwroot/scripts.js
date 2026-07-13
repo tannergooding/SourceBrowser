@@ -182,8 +182,6 @@ function onPageLoaded() {
 
     top.name = "topFrame";
 
-    sbInitConfigSelector();
-
     var query = document.location.search;
     if (query && query.slice(0, 3) == "?q=") {
         redirectLocation(top, "/#" + query.slice(1));
@@ -313,7 +311,7 @@ function i(lineNumberCount) {
     }
 
     sbApplyConfigFilter(document);
-    top.sbRefreshConfigPanelVisibility();
+    sbMountConfigSelectorIntoContentPage();
 }
 
 function updateTopHashFromRightPane() {
@@ -371,7 +369,7 @@ function ix(lineNumberCount) {
     }
 
     sbApplyConfigFilter(document);
-    top.sbRefreshConfigPanelVisibility();
+    sbMountConfigSelectorIntoContentPage();
 }
 
 function rewriteExternalLinks() {
@@ -1809,23 +1807,22 @@ document.addEventListener("click", switchToContentPaneOnTap, true);
 // ----------------------------------------------------------------------------
 // Config selector (#104).
 //
-// NOTE TO REVIEWERS: this DOM-manipulation shell (sbInitConfigSelector,
-// sbApplyConfigFilter, and their helpers below) has been validated by reading
-// and by the standalone pure-function test script
-// (src/HtmlGenerator.Tests/ClientScriptTests/configSelectorFilter.tests.js --
-// see the header comment there for how to run it), NOT by loading it in an actual
-// browser -- there is no browser test harness in the environment this was
-// authored in. Only sbConfigFilterMatches/sbParseConfigList (the decision
-// logic) have been executed and asserted against. A real-browser pass over
-// this file (does the picker render, does clicking it actually grey/ungrey
-// the right elements in each frame, does it survive real navigation) is a
-// known, deliberate gap that must happen before this ships to users.
+// The selector panel is mounted INSIDE the content page itself -- directly
+// under the file's "dH" header block, as part of the code view -- rather than
+// as a persistent row spanning the whole index.html page above both panes.
+// See sbMountConfigSelectorIntoContentPage below, called from i()/ix() on
+// every content-page load. This has been validated live in a real browser
+// (pill toggling, #if-region grey/highlight switching, and the multi-config
+// repo demo all confirmed working end-to-end), not just via the standalone
+// pure-function test script (src/HtmlGenerator.Tests/ClientScriptTests/configSelectorFilter.tests.js
+// -- see the header comment there for how to run it, and for exactly which
+// functions it covers).
 //
 // Selection is a FILTER, not a subtree switch: elements tagged data-configs
 // that don't overlap the current selection are greyed (not removed), and an
 // empty/no selection shows everything (the union) -- byte-identical in
 // behavior to a site built without configs when only one config exists,
-// since such a site never has configs.json and sbInitConfigSelector no-ops.
+// since such a site never has configs.json and sbMountConfigSelectorIntoContentPage no-ops.
 // ----------------------------------------------------------------------------
 
 var sbConfigSelectorStorageKey = "sourceBrowserSelectedConfigs";
@@ -1997,17 +1994,22 @@ function sbReapplyConfigFilterToAllFrames() {
     } catch (e) { }
 }
 
-// Bootstraps the config panel -- now a persistent row in index.html itself
-// (between the header and nav/content panes), not something embedded inside
-// header.html's frame. No-ops entirely (renders nothing) when configs.json is
-// missing/has fewer than 2 configs -- i.e. every 0/1-config site, which is
-// the overwhelming majority of real usage -- so those sites see zero visual
-// or behavioral change from this feature existing.
+// Mounts the config panel INSIDE the content page itself, directly under its
+// "dH" file-header block, so the selector reads as part of the code view
+// instead of a separate row/banner. Called from i()/ix() on every
+// content-page load (a fresh mount each time, since each navigation is a full
+// frame reload -- there's no cross-navigation DOM state to carry beyond
+// what's already in sessionStorage). No-ops entirely when: the page has no
+// "dH" header (not a real source/content page), the page has nothing tagged
+// data-configs at all (nothing to select between for THIS page), or
+// configs.json is missing/has fewer than 2 configs -- i.e. every 0/1-config
+// site, which is the overwhelming majority of real usage -- so those sites
+// see zero visual or behavioral change from this feature existing.
 var sbConfigSelectorData = null; // { configs, axes, configAxisValues } from configs.json.
 
-function sbInitConfigSelector() {
-    var container = document.getElementById("configSelectorContainer");
-    if (!container) {
+function sbMountConfigSelectorIntoContentPage() {
+    var anchor = document.querySelector(".dH");
+    if (!anchor || !document.querySelector("[data-configs]")) {
         return;
     }
 
@@ -2031,42 +2033,20 @@ function sbInitConfigSelector() {
         }
 
         sbConfigSelectorData = data;
+
+        var container = document.getElementById("configSelectorContainer");
+        if (!container) {
+            container = document.createElement("div");
+            container.id = "configSelectorContainer";
+            anchor.parentNode.insertBefore(container, anchor.nextSibling);
+        }
+
         sbRenderConfigSelectorUI(container, data);
-        sbRefreshConfigPanelVisibility();
     };
     // A missing configs.json (single/no-config site) is the common case and
-    // simply leaves the container empty -- no error handling needed beyond
+    // simply leaves nothing mounted -- no error handling needed beyond
     // onload checking request.status.
     request.send();
-}
-
-// Shows/hides the panel based on whether the CURRENTLY-DISPLAYED content page
-// has anything to select between at all. A site can have 2+ registered
-// configs overall yet still have plenty of pages that are entirely shared
-// (no [data-configs] anywhere on them) -- the panel would be noise there, so
-// it collapses out of existence rather than sitting around uselessly. Safe to
-// call from any frame's copy of this script (it only ever touches `top`'s own
-// document/state), and is re-run on every content-frame navigation via the
-// top.sbRefreshConfigPanelVisibility() calls wired into i()/ix().
-function sbRefreshConfigPanelVisibility() {
-    var container = document.getElementById("configSelectorContainer");
-    if (!container || !sbConfigSelectorData) {
-        return;
-    }
-
-    var hasConfigsOnCurrentPage = false;
-    try {
-        hasConfigsOnCurrentPage = !!(s && s.document && s.document.querySelector("[data-configs]"));
-    } catch (e) {
-        // Cross-frame access can throw before the frame has finished its
-        // initial navigation; treat as "nothing to show yet".
-    }
-
-    if (hasConfigsOnCurrentPage) {
-        container.classList.remove("configSelectorPanelHidden");
-    } else {
-        container.classList.add("configSelectorPanelHidden");
-    }
 }
 
 var sbConfigPanelCollapsedStorageKey = "sourceBrowserConfigPanelCollapsed";

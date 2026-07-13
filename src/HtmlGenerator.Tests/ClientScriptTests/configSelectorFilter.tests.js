@@ -35,14 +35,13 @@
 //
 // IMPORTANT: this only validates pure logic (the filter decision plus the
 // hash-router's file classification). It does NOT validate sbApplyConfigFilter,
-// sbInitConfigSelector, sbTryAutoNavigateToVariant, or any other DOM-manipulation
-// code in scripts.js -- those still need a real browser pass before this
-// feature can be considered browser-verified. See the prominent comment block
-// in scripts.js immediately above sbConfigFilterMatches. (The end-to-end
-// auto-navigate behavior itself -- selecting a single config and confirming
-// the source frame actually redirects to the right variant page with the
-// correct #if branch active -- HAS been manually verified live in a browser;
-// this file only covers what can be exercised without one.)
+// sbMountConfigSelectorIntoContentPage, sbTryAutoNavigateToVariant, or any
+// other DOM-manipulation code in scripts.js -- those have been separately
+// verified live in a real browser (pill toggling, #if-region grey/highlight
+// switching, and auto-navigate all confirmed working end-to-end against the
+// multi-config demo site), but are not exercised by this dependency-free
+// harness. See the prominent comment block in scripts.js immediately above
+// sbConfigFilterMatches.
 
 function sbTestReadScriptsJs() {
     var fso = new ActiveXObject("Scripting.FileSystemObject");

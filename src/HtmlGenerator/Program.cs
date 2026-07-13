@@ -21,6 +21,15 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         {
             var options = CommandLineOptions.Parse(args);
 
+            if (options.MergeConfigsOnly)
+            {
+                // The standalone merge invocation needs no projects, no MSBuild, no Pass1 at all -- it
+                // only reads whatever /config:<name> runs have already staged under this /out's
+                // obj/<config> folders. This is what a distributed CI aggregation job calls after
+                // collecting each per-platform job's staging as an artifact onto one /out.
+                return RunMergeConfigsOnly(options);
+            }
+
             if (options.Projects.Count == 0)
             {
                 PrintUsage();
@@ -56,30 +65,33 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             // per-assembly index to a separate "obj" subdirectory that Pass2 treats as read-only input --
             // Pass2 copies each assembly's folder from "obj" into "index" before finalizing it, so "obj"
             // stays a pure, re-derivable artifact that no later step mutates in place.
+            //
+            // When /config:<name> is set, Pass1's raw staging is further namespaced to obj/<config> so
+            // that N separately-invoked config runs never clobber each other's raw output on a shared
+            // /out -- each config's Pass1 output is its own durable, independently-incremental artifact
+            // (the existing per-project staleness key now keyed per (project, config), no new mechanism).
+            // The served website ("index") stays a single shared location for every config: this is the
+            // "one merged site, not partitioned per config" contract -- Pass2 (today) still writes the
+            // single/default-config index exactly as before; the cross-config MERGE of declarations,
+            // references, and file-render dedup across obj/<config1>, obj/<config2>, ... happens as a
+            // separate step below (mirrored by /mergeConfigsOnly for a standalone invocation), never by
+            // partitioning "index" itself.
             Paths.WebsiteDestinationFolder = Path.Combine(runOutputRoot, "index");
-            Paths.SolutionDestinationFolder = Path.Combine(runOutputRoot, "obj");
+            Paths.SolutionDestinationFolder = string.IsNullOrEmpty(options.Config)
+                ? Path.Combine(runOutputRoot, "obj")
+                : Path.Combine(runOutputRoot, "obj", options.Config);
 
             Directory.CreateDirectory(Paths.SolutionDestinationFolder);
             Directory.CreateDirectory(Paths.WebsiteDestinationFolder);
+
+            ConfigRegistry.EnsureConfigRegistered(runOutputRoot, options.Config);
 
             Log.ErrorLogFilePath = Path.Combine(Paths.WebsiteDestinationFolder, Log.ErrorLogFile);
             Log.MessageLogFilePath = Path.Combine(Paths.WebsiteDestinationFolder, Log.MessageLogFile);
 
             using (Disposable.Timing("Generating website"))
             {
-                var federation = new Federation();
-
-                if (!options.NoBuiltInFederations)
-                {
-                    federation.AddFederations(Federation.DefaultFederatedIndexUrls);
-                }
-
-                federation.AddFederations(options.Federations);
-
-                foreach (var entry in options.OfflineFederations)
-                {
-                    federation.AddFederation(entry.Key, entry.Value);
-                }
+                var federation = BuildFederation(options);
 
                 using (var cts = new CancellationTokenSource())
                 {
@@ -93,8 +105,29 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                     await IndexSolutionsAsync(options.Projects, options.Properties, federation, options.ServerPathMappings, options.RepoPathMappings, options.PluginBlacklist, cts.Token, options.DoNotIncludeReferencedProjects, options.RootPath,
                         options.IncludeSourceGeneratedDocuments);
                 }
-                FinalizeProjects(options.EmitAssemblyList, federation);
-                WebsiteFinalizer.Finalize(runOutputRoot, options.EmitAssemblyList, federation, options.ShowBranding);
+                if (string.IsNullOrEmpty(options.Config))
+                {
+                    // Default (no /config) path: completely unchanged from before the config feature
+                    // existed. Finalization happens directly, exactly as today -- this is what makes the
+                    // no-config case trivially byte-identical (the code path is literally untouched).
+                    FinalizeProjects(options.EmitAssemblyList, federation);
+                    WebsiteFinalizer.Finalize(runOutputRoot, options.EmitAssemblyList, federation, options.ShowBranding);
+                }
+                else
+                {
+                    // Config mode is Pass1-ONLY here: per-project Pass2 finalization (SolutionFinalizer.
+                    // FinalizeProjects / WebsiteFinalizer.Finalize) deletes/packs the very raw artifacts
+                    // (DeclarationMap.txt, reference shards) the cross-config merge step needs to read --
+                    // BackpatchUnreferencedDeclarations deletes DeclarationMap.txt after consuming it, and
+                    // GenerateReferencesFilesFromShard opens each shard with FileOptions.DeleteOnClose.
+                    // Running Pass2 per-config-invocation would both destroy that raw data before a later
+                    // config's merge could read it AND clobber the shared "index/" with a last-config-wins
+                    // single-config view instead of ever actually merging. So finalization is deferred
+                    // entirely to the merge step below (RunConfigMergeIfNeeded), which decides whether to
+                    // run today's ordinary single-config finalizer (only one config registered so far) or
+                    // the config-aware merged finalizer (two or more registered).
+                    RunConfigMergeIfNeeded(runOutputRoot, options.EmitAssemblyList, federation, options.ShowBranding);
+                }
             }
             Log.Close();
 
@@ -103,12 +136,109 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             return Log.ErrorCount > 0 ? 1 : 0;
         }
 
+        /// <summary>
+        /// The standalone /mergeConfigsOnly entry point: no MSBuild, no Pass1, just the guarded
+        /// cross-config merge over whatever is already staged in obj/&lt;config&gt; under the given /out.
+        /// </summary>
+        private static int RunMergeConfigsOnly(CommandLineOptions options)
+        {
+            var runOutputRoot = options.SolutionDestinationFolder;
+            if (string.IsNullOrEmpty(runOutputRoot))
+            {
+                Log.Write("/mergeConfigsOnly requires /out:<outputdirectory> to locate the staged configs.", ConsoleColor.Red);
+                Log.Close();
+                return 1;
+            }
+
+            Log.ErrorLogFilePath = Path.Combine(Path.Combine(runOutputRoot, "index"), Log.ErrorLogFile);
+            Log.MessageLogFilePath = Path.Combine(Path.Combine(runOutputRoot, "index"), Log.MessageLogFile);
+
+            var federation = BuildFederation(options);
+            RunConfigMergeIfNeeded(runOutputRoot, options.EmitAssemblyList, federation, options.ShowBranding);
+            Log.Close();
+            return Log.ErrorCount > 0 ? 1 : 0;
+        }
+
+        private static Federation BuildFederation(CommandLineOptions options)
+        {
+            var federation = new Federation();
+
+            if (!options.NoBuiltInFederations)
+            {
+                federation.AddFederations(Federation.DefaultFederatedIndexUrls);
+            }
+
+            federation.AddFederations(options.Federations);
+
+            foreach (var entry in options.OfflineFederations)
+            {
+                federation.AddFederation(entry.Key, entry.Value);
+            }
+
+            return federation;
+        }
+
+        /// <summary>
+        /// Shared by the /config:&lt;name&gt; auto-tail and the standalone /mergeConfigsOnly invocation.
+        /// Guarded against a concurrent merge attempt against the same /out (ConfigMergeCoordinator.
+        /// RunGuarded). Config mode defers ALL Pass2 finalization to this method (see the comment in
+        /// Main): with exactly one config registered so far there is nothing to merge yet, so this runs
+        /// today's ordinary single-config finalizer reading straight from that one config's obj/&lt;config&gt;
+        /// -- byte-identical to the no-config path, satisfying "a single-config run should still just
+        /// work." With two or more configs registered, the real cross-config merge is required.
+        ///
+        /// NOTE: with two or more configs registered, this reads all registered configs' obj/&lt;config&gt;
+        /// raw declaration maps + reference shards (via <see cref="ConfigProjectMerger"/>) and finalizes
+        /// through <see cref="ConfigAwareProjectFinalizer"/>: the primary config's raw output establishes
+        /// real rendered HTML content (byte-identical to a single-config run for the non-divergent common
+        /// case), then every project's "Used By" block is re-patched from the merged, config-tagged
+        /// referenced-assembly edges across ALL configs. Re-rendering genuinely divergent per-file content
+        /// (disambiguation pages, file-render dedup) remains a separate, tracked follow-up -- see
+        /// <see cref="ConfigAwareProjectFinalizer"/>'s remarks.
+        /// </summary>
+        private static void RunConfigMergeIfNeeded(string outRoot, bool emitAssemblyList, Federation federation, bool showBranding)
+        {
+            ConfigMergeCoordinator.RunGuarded(outRoot, () =>
+            {
+                var configs = ConfigRegistry.GetRegisteredConfigs(outRoot);
+                if (configs.Count == 0)
+                {
+                    return;
+                }
+
+                Paths.WebsiteDestinationFolder = Path.Combine(outRoot, "index");
+                Directory.CreateDirectory(Paths.WebsiteDestinationFolder);
+
+                if (configs.Count == 1)
+                {
+                    // Nothing to merge yet -- finalize this one config's raw obj/<config> output exactly
+                    // as the default/no-config path would, straight into the shared "index/".
+                    Paths.SolutionDestinationFolder = Path.Combine(outRoot, "obj", configs[0]);
+                    FinalizeProjects(emitAssemblyList, federation);
+                    WebsiteFinalizer.Finalize(outRoot, emitAssemblyList, federation, showBranding);
+                    return;
+                }
+
+                Log.Message($"Merging {configs.Count} configs into the shared index: {string.Join(", ", configs)}");
+
+                var configObjRoots = configs.ToDictionary(
+                    c => c,
+                    c => Path.Combine(outRoot, "obj", c),
+                    StringComparer.Ordinal);
+
+                ConfigAwareProjectFinalizer.Finalize(configObjRoots, Paths.WebsiteDestinationFolder, emitAssemblyList, federation);
+                WebsiteFinalizer.Finalize(outRoot, emitAssemblyList, federation);
+            });
+        }
+
         private static void PrintUsage()
         {
             Console.WriteLine("Usage: HtmlGenerator "
                 + "[/out:<outputdirectory>] "
                 + "[/force] "
                 + "[/incremental] "
+                + "[/config:<name>] "
+                + "[/mergeConfigsOnly] "
                 + "[/useplugins] "
                 + "[/noplugins] "
                 + "[/noplugin:Git] "

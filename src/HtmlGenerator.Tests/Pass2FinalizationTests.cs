@@ -146,6 +146,78 @@ namespace HtmlGenerator.Tests
             CountOccurrences(secondRunProjectExplorer, "Used By").ShouldBe(1);
         }
 
+        [TestMethod]
+        public void FinalizeProjects_never_deletes_the_source_declaration_map_or_reference_shards()
+        {
+            // These two files are Pass1 "intermediates" that Pass2 DOES delete/consume -- but only from
+            // its own copy in the output root. This is the invariant a /config: run's cross-config merge
+            // step depends on: a config's raw obj/<config>/<project> data must still be there to read
+            // even after that config has already been finalized once (e.g. when it was the only config
+            // registered at the time). ProjectFinalizer's constructor copying Pass1's folder into the
+            // output root before doing anything destructive is what makes this automatic.
+            var assemblyBFolder = Path.Combine(sourceIndexFolder, "AssemblyB");
+            var declarationMapFile = Path.Combine(assemblyBFolder, Constants.DeclarationMap + ".txt");
+            ProjectGenerator.GenerateSymbolIDToListOfDeclarationLocationsMap(
+                assemblyBFolder,
+                new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<Tuple<string, long>>>
+                {
+                    ["deadbeef"] = new System.Collections.Generic.List<Tuple<string, long>>
+                    {
+                        Tuple.Create("File.cs", 42L),
+                    },
+                });
+
+            ProjectGenerator.GenerateReferencesDataFilesToAssembly(
+                sourceIndexFolder,
+                "AssemblyB",
+                new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<Reference>>
+                {
+                    ["deadbeef"] = new System.Collections.Generic.List<Reference>
+                    {
+                        new Reference
+                        {
+                            FromAssemblyId = "AssemblyA",
+                            Url = "AssemblyA/File.cs.html",
+                            FromLocalPath = "File.cs",
+                            ReferenceLineNumber = 1,
+                            ReferenceColumnStart = 1,
+                            ReferenceColumnEnd = 2,
+                            ReferenceLineText = "someCall();",
+                            ToSymbolName = "Method",
+                            Kind = ReferenceKind.Reference,
+                        },
+                    },
+                });
+
+            var referenceShardFiles = Directory.GetFiles(
+                Path.Combine(assemblyBFolder, Constants.ReferencesFileName),
+                "*" + Microsoft.SourceBrowser.HtmlGenerator.ProjectGenerator.ReferenceShardExtension);
+            referenceShardFiles.ShouldNotBeEmpty("The fixture must actually produce a reference shard file for this test to be meaningful.");
+            File.Exists(declarationMapFile).ShouldBeTrue("The fixture must actually produce a DeclarationMap.txt for this test to be meaningful.");
+
+            var declarationMapBytesBefore = File.ReadAllBytes(declarationMapFile);
+            var shardBytesBefore = referenceShardFiles.ToDictionary(f => f, File.ReadAllBytes);
+
+            var finalizer = new SolutionFinalizer(sourceIndexFolder, outputFolder);
+            finalizer.FinalizeProjects(emitAssemblyList: false, federation: new Federation());
+
+            // Survive, unmodified, in the source (obj) copy...
+            File.Exists(declarationMapFile).ShouldBeTrue();
+            File.ReadAllBytes(declarationMapFile).ShouldBe(declarationMapBytesBefore);
+            foreach (var shardFile in referenceShardFiles)
+            {
+                File.Exists(shardFile).ShouldBeTrue();
+                File.ReadAllBytes(shardFile).ShouldBe(shardBytesBefore[shardFile]);
+            }
+
+            // ...even though Pass2 deletes/consumes its own copy of both, exactly as it always has.
+            File.Exists(Path.Combine(outputFolder, "AssemblyB", Constants.DeclarationMap + ".txt")).ShouldBeFalse();
+            Directory.GetFiles(
+                Path.Combine(outputFolder, "AssemblyB", Constants.ReferencesFileName),
+                "*" + Microsoft.SourceBrowser.HtmlGenerator.ProjectGenerator.ReferenceShardExtension)
+                .ShouldBeEmpty();
+        }
+
         private static int CountOccurrences(string text, string substring)
         {
             int count = 0;

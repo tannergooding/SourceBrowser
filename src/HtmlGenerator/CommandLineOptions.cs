@@ -27,7 +27,9 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             bool includeSourceGeneratedDocuments,
             bool suppressWarnings,
             bool showBranding,
-            bool incremental)
+            bool incremental,
+            string config,
+            bool mergeConfigsOnly)
         {
             SolutionDestinationFolder = solutionDestinationFolder;
             Projects = projects;
@@ -48,6 +50,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             SuppressWarnings = suppressWarnings;
             ShowBranding = showBranding;
             Incremental = incremental;
+            Config = config;
+            MergeConfigsOnly = mergeConfigsOnly;
         }
 
         public string SolutionDestinationFolder { get; }
@@ -90,6 +94,28 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         /// </summary>
         public bool Incremental { get; }
 
+        /// <summary>
+        /// /config:&lt;name&gt; -- names this run as one of possibly several configs (e.g. mac/linux/
+        /// windows builds of the same sources) being indexed into the same /out. Configs merge into a
+        /// single served index rather than partitioning it: symbols/files identical across configs
+        /// collapse into shared entries, and only genuinely config-divergent locations/files are
+        /// tagged per config. Null (the default) means "no config" -- output is unaffected, byte-for-
+        /// byte identical to a run without this flag.
+        /// </summary>
+        public string Config { get; }
+
+        /// <summary>
+        /// /mergeConfigsOnly -- runs ONLY the cross-config merge step (declarations + references +
+        /// file-render dedup) over whatever configs are already registered in this /out's Configs.txt,
+        /// without loading MSBuild/running Pass1 at all. This is the standalone merge invocation a
+        /// distributed CI aggregation job calls after collecting each per-platform job's obj/&lt;config&gt;
+        /// staging as an artifact onto one /out -- it needs no toolchain, only the raw staged output
+        /// already on disk. A normal /config:&lt;name&gt; run also performs this same merge step as its
+        /// final tail (the "convenience path" for a shared /out / local multi-config run); this flag
+        /// just lets it be invoked directly and independently of Pass1.
+        /// </summary>
+        public bool MergeConfigsOnly { get; }
+
         public static CommandLineOptions Parse(params string[] args)
         {
             var solutionDestinationFolder = (string)null;
@@ -111,6 +137,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             var suppressWarnings = false;
             var showBranding = false;
             var incremental = false;
+            var config = (string)null;
+            var mergeConfigsOnly = false;
 
             foreach (var arg in args)
             {
@@ -208,6 +236,18 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 if (string.Equals(arg, "/incremental", StringComparison.OrdinalIgnoreCase))
                 {
                     incremental = true;
+                    continue;
+                }
+
+                if (arg.StartsWith("/config:", StringComparison.OrdinalIgnoreCase))
+                {
+                    config = arg.Substring("/config:".Length).StripQuotes();
+                    continue;
+                }
+
+                if (string.Equals(arg, "/mergeConfigsOnly", StringComparison.OrdinalIgnoreCase))
+                {
+                    mergeConfigsOnly = true;
                     continue;
                 }
 
@@ -377,7 +417,9 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 includeSourceGeneratedDocuments,
                 suppressWarnings,
                 showBranding,
-                incremental);
+                incremental,
+                config,
+                mergeConfigsOnly);
         }
 
         private static void AddProject(List<string> projects, string path)

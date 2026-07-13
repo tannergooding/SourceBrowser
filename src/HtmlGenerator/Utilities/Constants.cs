@@ -59,6 +59,17 @@
         public static readonly string AssemblyPaths = "AssemblyPaths.txt";
 
         /// <summary>
+        /// Per-project solution-folder chain (one segment per line, top-down; empty file for a project
+        /// at the solution root), persisted next to that project's other Pass1 output. Solely so the
+        /// config merge step can reconstruct SolutionExplorer.html's navigation tree across all
+        /// registered configs' obj/&lt;config&gt; roots without re-parsing the original .sln/.slnx --
+        /// the merge step runs as a separate invocation from whichever one(s) ran Pass1, with no access
+        /// to the solution file itself. This is purely additive: nothing else reads or depends on this
+        /// file, so it cannot regress any other output.
+        /// </summary>
+        public static readonly string SolutionFolderFileName = "SolutionFolder.txt";
+
+        /// <summary>
         /// Per-assembly staleness key written by Pass1 (see <see cref="ProjectStaleness"/>) next to that
         /// assembly's raw index, and copied by Pass2 alongside the finalized output. Comparing the two
         /// copies is how incremental runs decide whether an assembly's Pass1 output (and Pass2 copy) can

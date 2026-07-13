@@ -384,6 +384,25 @@ Enter a type or member name or <a href=""/#q=assembly%20"" target=""_top"" class
             string symbolId,
             IEnumerable<string> filePaths)
         {
+            GeneratePartialTypeDisambiguationFile(solutionDestinationFolder, projectDestinationFolder, symbolId, filePaths, configTagsByFilePath: null);
+        }
+
+        /// <summary>
+        /// Same disambiguation page used for ordinary partial types/members (one symbol ID declared in
+        /// multiple files), extended to optionally annotate each link with the config(s) it applies
+        /// under -- e.g. a symbol declared in Environment.Windows.cs under "windows" and
+        /// Environment.Unix.cs under "linux"/"mac" is just a multi-location symbol like any other
+        /// partial type, with a config tag as extra metadata on each location. When
+        /// <paramref name="configTagsByFilePath"/> is null (the default, single/no-config case), this
+        /// renders byte-identically to the untagged overload.
+        /// </summary>
+        public static void GeneratePartialTypeDisambiguationFile(
+            string solutionDestinationFolder,
+            string projectDestinationFolder,
+            string symbolId,
+            IEnumerable<string> filePaths,
+            IReadOnlyDictionary<string, IEnumerable<string>> configTagsByFilePath)
+        {
             string partialFolder = Path.Combine(projectDestinationFolder, Constants.PartialResolvingFileName);
             Directory.CreateDirectory(partialFolder);
             var disambiguationFileName = Path.Combine(partialFolder, symbolId) + ".html";
@@ -391,7 +410,21 @@ Enter a type or member name or <a href=""/#q=assembly%20"" target=""_top"" class
                 filePaths
                 .OrderBy(filePath => Paths.StripExtension(filePath))
                 .Select((filePath, index) =>
-                    $"<div class=\"partialTypeLink\"><a{(index == 0 ? $" id=\"{symbolId}\"" : "")} href=\"../{filePath}.html#{symbolId}\">{filePath}</a></div>"));
+                {
+                    string configTag = "";
+                    if (configTagsByFilePath != null &&
+                        configTagsByFilePath.TryGetValue(filePath, out var configs) &&
+                        configs != null)
+                    {
+                        var configList = configs.OrderBy(c => c, StringComparer.OrdinalIgnoreCase).ToList();
+                        if (configList.Count > 0)
+                        {
+                            configTag = $" <span class=\"partialTypeConfigTag\">[{string.Join(", ", configList)}]</span>";
+                        }
+                    }
+
+                    return $"<div class=\"partialTypeLink\"><a{(index == 0 ? $" id=\"{symbolId}\"" : "")} href=\"../{filePath}.html#{symbolId}\">{filePath}</a>{configTag}</div>";
+                }));
             string content = string.Format(
                 partialTypeDisambiguationFileTemplate,
                 Paths.GetCssPathFromFile(solutionDestinationFolder, disambiguationFileName),

@@ -360,6 +360,14 @@ namespace Microsoft.SourceBrowser.SourceIndexServer.Models
                 return comparison;
             }
 
+            // Among equally-good matches, prefer the canonical framework assemblies so BCL types
+            // surface above incidental same-named types from niche assemblies.
+            comparison = DeclaredSymbolInfo.GetAssemblyRank(left.AssemblyName).CompareTo(DeclaredSymbolInfo.GetAssemblyRank(right.AssemblyName));
+            if (comparison != 0)
+            {
+                return comparison;
+            }
+
             if (left.Name != null && right.Name != null)
             {
                 comparison = string.Compare(left.Name, right.Name, StringComparison.Ordinal);

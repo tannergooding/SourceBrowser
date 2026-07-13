@@ -49,26 +49,25 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             collector.AddDeclaredSymbolLocation(symbolId, documentRelativeFilePath, positionInFile);
         }
 
+        /// <summary>
+        /// Adds a single redirect entry to the shared map. Only called from single-threaded passes
+        /// (project-file/XML/loose-file generation and TypeScript), so it takes no locks; the parallel
+        /// document generation instead accumulates into a per-partition <see cref="ReferenceCollector"/>
+        /// that is folded in later by <see cref="MergeDeclarations"/>.
+        /// </summary>
         public static void AddDeclaredSymbolToRedirectMap(
             Dictionary<string, List<Tuple<string, long>>> symbolIDToListOfLocationsMap,
             string symbolId,
             string documentRelativeFilePath,
             long positionInFile)
         {
-            List<Tuple<string, long>> bucket = null;
-            lock (symbolIDToListOfLocationsMap)
+            if (!symbolIDToListOfLocationsMap.TryGetValue(symbolId, out var bucket))
             {
-                if (!symbolIDToListOfLocationsMap.TryGetValue(symbolId, out bucket))
-                {
-                    bucket = new List<Tuple<string, long>>();
-                    symbolIDToListOfLocationsMap.Add(symbolId, bucket);
-                }
+                bucket = new List<Tuple<string, long>>();
+                symbolIDToListOfLocationsMap.Add(symbolId, bucket);
             }
 
-            lock (bucket)
-            {
-                bucket.Add(Tuple.Create(documentRelativeFilePath, positionInFile));
-            }
+            bucket.Add(Tuple.Create(documentRelativeFilePath, positionInFile));
         }
 
         /// <summary>

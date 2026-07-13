@@ -65,14 +65,13 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             }
         }
 
+        // Only reached from the single-threaded loose-files pass (GenerateNonProjectFolder), so no
+        // locking is needed on the shared map.
         private void AddFileToRedirectMap(string filePath)
         {
-            lock (SymbolIDToListOfLocationsMap)
-            {
-                SymbolIDToListOfLocationsMap.Add(
-                    SymbolIdService.GetId(filePath),
-                    new List<Tuple<string, long>> { Tuple.Create(filePath, 0L) });
-            }
+            SymbolIDToListOfLocationsMap.Add(
+                SymbolIdService.GetId(filePath),
+                new List<Tuple<string, long>> { Tuple.Create(filePath, 0L) });
         }
 
         private ProjectGenerator()

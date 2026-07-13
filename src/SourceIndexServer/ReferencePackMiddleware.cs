@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
@@ -15,17 +16,21 @@ namespace Microsoft.SourceBrowser.SourceIndexServer
     {
         private readonly RequestDelegate _next;
         private readonly string _rootPath;
+        private readonly string _rootPathPrefix;
         private readonly ConcurrentDictionary<string, Lazy<ReferencePack>> _packs = new(StringComparer.OrdinalIgnoreCase);
 
         public ReferencePackMiddleware(RequestDelegate next, string rootPath)
         {
             _next = next;
             _rootPath = rootPath;
+            _rootPathPrefix = Path.GetFullPath(rootPath).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         }
 
         public async Task InvokeAsync(HttpContext context)
         {
-            if (TryMatch(context.Request.Path.Value, out string assembly, out string symbolId) &&
+            var path = context.Request.Path.Value;
+
+            if (TryMatch(path, out string assembly, out string symbolId) &&
                 TryGetPack(assembly) is ReferencePack pack &&
                 pack.TryGetFragment(symbolId, out byte[] fragment))
             {
@@ -35,7 +40,67 @@ namespace Microsoft.SourceBrowser.SourceIndexServer
                 return;
             }
 
+            // The packed reference store, the master search index and the per-project build
+            // intermediates all sit under the index root purely so the server can read them; nothing
+            // links to them and the client only ever calls api/symbols. Return 404 rather than let the
+            // static-file handler stream e.g. the multi-hundred-MB references.pack to anyone who guesses
+            // the URL.
+            if (IsServerOnlyArtifact(path))
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+
             await _next(context);
+        }
+
+        // Index data the server reads at startup plus the per-project finalization intermediates. All of
+        // these live under the index root purely for server/build use and are never linked or fetched by
+        // the browser, which only calls api/symbols and navigates .html/.js. Notably absent: i.txt (per
+        // project stats) and diagnostics.txt, which users do open directly, so those stay servable.
+        private static readonly HashSet<string> ServerOnlyFileNames = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "DeclaredSymbols.txt",                 // master search index
+            "Huffman.txt",                         // master huffman tables
+            Constants.MasterProjectMap + ".txt",   // Projects.txt
+            Constants.MasterAssemblyMap + ".txt",  // Assemblies.txt
+            "D.txt",                               // per-project declared symbols
+            "BaseMembers.txt",                     // per-project base member links
+            "ImplementedInterfaceMembers.txt",     // per-project interface member links
+        };
+
+        // Matches the reference pack/index and the server-only index/intermediate .txt files, but only
+        // when the request actually resolves to a file inside the index tree, so unrelated static assets
+        // served from wwwroot (a robots.txt, say) are left alone.
+        private bool IsServerOnlyArtifact(string path)
+        {
+            if (string.IsNullOrEmpty(path) || path[0] != '/')
+            {
+                return false;
+            }
+
+            var fileName = path.Substring(path.LastIndexOf('/') + 1);
+
+            bool blocked =
+                fileName.EndsWith(".pack", StringComparison.OrdinalIgnoreCase) ||
+                fileName.EndsWith(".index", StringComparison.OrdinalIgnoreCase) ||
+                ServerOnlyFileNames.Contains(fileName);
+
+            if (!blocked)
+            {
+                return false;
+            }
+
+            var relative = path.Substring(1).Replace('/', Path.DirectorySeparatorChar);
+            var candidate = Path.GetFullPath(Path.Combine(_rootPath, relative));
+
+            // Reject anything that escapes the index root (e.g. via ..) rather than probing outside it.
+            if (!candidate.StartsWith(_rootPathPrefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return false;
+            }
+
+            return File.Exists(candidate);
         }
 
         // Matches /{assembly}/R/{id}.html where id is exactly 16 lowercase hex characters. The assembly

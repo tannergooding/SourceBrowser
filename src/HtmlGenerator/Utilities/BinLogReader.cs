@@ -46,7 +46,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 void TryGetInvocationFromEvent(object sender, BuildEventArgs args)
                 {
                     var invocation = TryGetInvocationFromRecord(args, taskIdToInvocationMap);
-                    if (invocation != null)
+                    if (invocation != null && !IsTemporaryWpfProject(invocation.ProjectFilePath))
                     {
                         invocation.SolutionRoot = Path.GetDirectoryName(binLogFilePath);
                         invocations.Add(invocation);
@@ -73,13 +73,23 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             build.VisitAllChildren<Microsoft.Build.Logging.StructuredLogger.Task>(t =>
             {
                 var invocation = TryGetInvocationFromTask(t);
-                if (invocation != null)
+                if (invocation != null && !IsTemporaryWpfProject(invocation.ProjectFilePath))
                 {
                     invocations.Add(invocation);
                 }
             });
 
             return invocations;
+        }
+
+        // WPF builds compile a throwaway "<project>_wpftmp.csproj" for temporary XAML-generated sources.
+        // Its compiler invocation duplicates the real project under a temp path and only pollutes the
+        // index, so drop any invocation whose project file name carries the _wpftmp marker.
+        // See https://github.com/KirillOsenkov/SourceBrowser/issues/188.
+        public static bool IsTemporaryWpfProject(string projectFilePath)
+        {
+            return projectFilePath != null &&
+                Path.GetFileName(projectFilePath).IndexOf("_wpftmp", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private static CompilerInvocation TryGetInvocationFromRecord(BuildEventArgs args, Dictionary<(int, int), CompilerInvocation> taskIdToInvocationMap)

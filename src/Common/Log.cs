@@ -17,6 +17,12 @@ namespace Microsoft.SourceBrowser.Common
 
         private static readonly BlockingCollection<IMessage> Messages = new BlockingCollection<IMessage>();
 
+        private static int errorCount;
+
+        // Number of severe errors logged so far. HtmlGenerator uses this to return a non-zero exit code
+        // when indexing hit a real failure, so CI catches broken runs instead of treating them as success.
+        public static int ErrorCount => Volatile.Read(ref errorCount);
+
         private static void OnNext(IMessage msg)
         {
             switch (msg)
@@ -72,8 +78,22 @@ namespace Microsoft.SourceBrowser.Common
             Exception(text, isSevere);
         }
 
+        // When set, non-severe warnings (e.g. first-chance exception noise from MSBuild evaluation) are
+        // dropped from both the console and Errors.txt so the logs stay readable. Severe errors are
+        // always kept. Wired from the /noWarnings command-line switch.
+        public static bool SuppressWarnings { get; set; }
+
         public static void Exception(string message, bool isSevere = true)
         {
+            if (isSevere)
+            {
+                Interlocked.Increment(ref errorCount);
+            }
+            else if (SuppressWarnings)
+            {
+                return;
+            }
+
             Write(message, isSevere ? ConsoleColor.Red : ConsoleColor.Yellow);
             WriteToFile(message, ErrorLogFilePath);
         }

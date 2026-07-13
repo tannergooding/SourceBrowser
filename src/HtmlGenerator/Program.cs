@@ -17,19 +17,20 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 {
     public class Program
     {
-        private static async Task Main(string[] args)
+        private static async Task<int> Main(string[] args)
         {
             var options = CommandLineOptions.Parse(args);
 
             if (options.Projects.Count == 0)
             {
                 PrintUsage();
-                return;
+                return 1;
             }
 
             Paths.SolutionDestinationFolder = options.SolutionDestinationFolder;
             SolutionGenerator.LoadPlugins = options.LoadPlugins;
             SolutionGenerator.ExcludeTests = options.ExcludeTests;
+            Log.SuppressWarnings = options.SuppressWarnings;
 
             AssertTraceListener.Register();
             AppDomain.CurrentDomain.FirstChanceException += FirstChanceExceptionHandler.HandleFirstChanceException;
@@ -87,6 +88,10 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 WebsiteFinalizer.Finalize(websiteDestination, options.EmitAssemblyList, federation);
             }
             Log.Close();
+
+            // Surface a non-zero exit code when any severe error was logged so callers (notably CI that
+            // reindexes on a schedule) can tell a run that limped to the end apart from a clean one.
+            return Log.ErrorCount > 0 ? 1 : 0;
         }
 
         private static void PrintUsage()
@@ -104,7 +109,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 + "[/offlinefederation:server=assemblyListFile] "
                 + "[/assemblylist]"
                 + "[/excludetests]" 
-                + "[/excludeSourceGeneratedDocuments]" +
+                + "[/excludeSourceGeneratedDocuments]"
+                + "[/noWarnings]" +
                 "" +
                 "Plugins are now off by default.");
         }

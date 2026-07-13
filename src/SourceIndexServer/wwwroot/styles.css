@@ -89,7 +89,15 @@ body {
    crowding the content. The header toggle button (and the search / result-click
    flows in scripts.js) flip the body's showNav class to pick which pane is
    visible; the content/document pane is shown by default. */
-@media only screen and (max-width: 700px) {
+/* The single-pane mobile layout applies both to narrow (portrait) screens and to
+   short landscape screens on touch devices -- a phone in landscape is wide enough to
+   miss the width breakpoint but too short for a comfortable side-by-side split, so it
+   gets the same one-pane-at-a-time treatment as portrait. These pane rules live in the
+   top document, which sees the real device viewport; the matching pane toggle lives in
+   the header iframe and is revealed via a JS-set .landscapePhone class instead (see the
+   .headerBody.landscapePhone rule below and updateLandscapePhonePane in scripts.js). */
+@media only screen and (max-width: 700px),
+       only screen and (orientation: landscape) and (max-height: 500px) and (pointer: coarse) {
     .paneContainer {
         flex-direction: column;
     }
@@ -1299,8 +1307,23 @@ ol a, ol a:link, ol a:hover, ol a:focus, ol a:active,
 }
 
 @media only screen and (max-width: 700px) {
+    /* Keep Help reachable on mobile -- it holds the only link to the overview/help page.
+       Drop the desktop float and sit it after the pane toggle as a flex sibling that
+       doesn't grow, so the search box still takes the remaining width. */
     #headerMenu {
-        display: none;
+        float: none;
+        flex: none;
+        padding: 0;
+    }
+
+    /* Size Help like the pane toggle so the two read as one consistent pair, rather than
+       Help's default 16px next to the toggle's 14px. */
+    #helpButtonLink {
+        display: inline-block;
+        margin: 0;
+        padding: 18px 8px;
+        font-size: 14px;
+        line-height: 20px;
     }
 
     /* The search box + pane toggle share this line -- lay them out as flex siblings and
@@ -1349,6 +1372,25 @@ ol a, ol a:link, ol a:hover, ol a:focus, ol a:active,
         user-select: none;
         -webkit-user-select: none;
     }
+}
+
+/* Landscape phones keep the desktop-width header layout (they are wide enough), but
+   they use the single-pane body layout (see the landscape term on the pane breakpoint
+   near the top), so they still need the pane toggle. The toggle lives in the fixed
+   58px-tall header iframe, whose own viewport is always short + landscape and so can't
+   tell a landscape phone from a portrait tablet via a CSS media query; scripts.js sets
+   .landscapePhone on the header body from a device-level matchMedia instead. */
+.headerBody.landscapePhone #paneToggle {
+    display: inline-block;
+    vertical-align: middle;
+    padding: 18px 14px;
+    color: white;
+    font-size: 14px;
+    line-height: 20px;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
 @media (prefers-color-scheme: dark) {

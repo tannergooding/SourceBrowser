@@ -229,6 +229,10 @@ function onHeaderLoad() {
         && top.document.body.classList
         && top.document.body.classList.contains("showNav"));
 
+    // Landscape phones use the single-pane layout but keep the desktop-width header,
+    // so reveal the pane toggle in the header for them (CSS can't detect this here).
+    updateLandscapePhonePane();
+
     searchBox.onkeyup = function () {
         if (this.value != lastSearchString || (event && event.keyCode == 13)) {
             lastSearchString = this.value;
@@ -648,6 +652,41 @@ function toggleMobilePane() {
     }
 
     setMobilePane(!topBody.classList.contains("showNav"));
+}
+
+// Landscape phones are wide enough to miss the max-width breakpoints but too short for a
+// comfortable side-by-side split, so the top document switches to the single-pane layout
+// for them purely in CSS (see the landscape term on the pane breakpoint in styles.css).
+// The pane toggle, however, lives in the fixed 58px-tall header iframe whose own viewport
+// is always short + landscape, so a CSS media query there can't tell a landscape phone
+// from a portrait tablet. Mirror the same device-level query here in JS -- evaluated
+// against `top` so it reflects the device viewport regardless of which frame calls in --
+// and flag the header body so the .headerBody.landscapePhone rule reveals the toggle.
+function updateLandscapePhonePane() {
+    var header = top.h;
+    if (!header || !header.document || !header.document.body || !top.matchMedia) {
+        return;
+    }
+
+    var mq = top.landscapePhoneQuery;
+    if (!mq) {
+        mq = top.matchMedia("(orientation: landscape) and (max-height: 500px) and (pointer: coarse)");
+        top.landscapePhoneQuery = mq;
+
+        var relay = function () { updateLandscapePhonePane(); };
+        if (mq.addEventListener) {
+            mq.addEventListener("change", relay);
+        } else if (mq.addListener) {
+            // Safari < 14 only exposes the deprecated MediaQueryList.addListener.
+            mq.addListener(relay);
+        }
+    }
+
+    if (mq.matches) {
+        header.document.body.classList.add("landscapePhone");
+    } else {
+        header.document.body.classList.remove("landscapePhone");
+    }
 }
 
 function isFile(path) {

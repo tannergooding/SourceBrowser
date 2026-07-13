@@ -861,7 +861,14 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         /// to whichever other config has the project, for the non-primary-only case handled by
         /// <see cref="StageNonPrimaryOnlyProjects"/>). A project's folder chain is the same regardless of
         /// config (it comes from the .sln/.slnx structure, not per-config content), so there is no
-        /// cross-config conflict to resolve here, unlike Used-By or the aggregates.
+        /// cross-config conflict to resolve here, unlike Used-By or the aggregates. RepoName/SolutionName
+        /// are read back the same way (from <see cref="Constants.ProjectInfoFileName"/>, same file the
+        /// ordinary single-config <see cref="ProjectFinalizer.ReadProjectInfo"/> already reads them from)
+        /// but looked up independently of the folder chain, so a project's tags don't disappear just
+        /// because it happens to lack a SolutionFolder.txt. The Repo/Solution top-level grouping nodes
+        /// (see <see cref="Program.GetSolutionExplorerGroupingFolder"/>) are recomputed here too, across
+        /// the merged project set, so a config-merged AND multi-repo site still gets the same grouping a
+        /// single-config multi-repo site would.
         /// </summary>
         private static Folder<ProjectSkeleton> ComputeMergedSolutionExplorerRoot(
             IReadOnlyDictionary<string, string> configObjRoots,
@@ -871,11 +878,37 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             var orderedConfigs = configObjRoots.Keys.OrderBy(c => c, StringComparer.Ordinal).ToArray();
             var root = new Folder<ProjectSkeleton>();
 
+            var tagsByAssembly = new Dictionary<string, Tuple<string, string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var assemblyId in projectNames)
+            {
+                tagsByAssembly[assemblyId] = ReadRepoAndSolutionName(configObjRoots, orderedConfigs, primaryConfig, assemblyId);
+            }
+
+            // Same grouping decision Program.IndexSolutionsAsync makes for a single Pass1 run, just
+            // computed over the merged (cross-config) project set instead of one run's own inputs --
+            // only introduce Repo/Solution nodes when the merged site actually spans more than one repo
+            // (or, within a repo, more than one solution), so single-repo/untagged config-merged sites
+            // stay exactly as before this grouping feature existed.
+            var distinctRepoCount = tagsByAssembly.Values
+                .Select(t => t.Item1)
+                .Where(r => !string.IsNullOrEmpty(r))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count();
+
+            var solutionCountsByRepo = tagsByAssembly.Values
+                .Where(t => !string.IsNullOrEmpty(t.Item1))
+                .GroupBy(t => t.Item1, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.Select(t => t.Item2).Where(s => !string.IsNullOrEmpty(s)).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                    StringComparer.OrdinalIgnoreCase);
+
             foreach (var assemblyId in projectNames)
             {
                 string[] folderChain = null;
 
-                var primarySolutionFolderFile = Path.Combine(configObjRoots[primaryConfig], assemblyId, Constants.SolutionFolderFileName);
+                var primaryProjectFolder = configObjRoots[primaryConfig];
+                var primarySolutionFolderFile = Path.Combine(primaryProjectFolder, assemblyId, Constants.SolutionFolderFileName);
                 if (File.Exists(primarySolutionFolderFile))
                 {
                     folderChain = File.ReadAllLines(primarySolutionFolderFile);
@@ -884,7 +917,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 {
                     foreach (var config in orderedConfigs)
                     {
-                        var solutionFolderFile = Path.Combine(configObjRoots[config], assemblyId, Constants.SolutionFolderFileName);
+                        var projectFolder = configObjRoots[config];
+                        var solutionFolderFile = Path.Combine(projectFolder, assemblyId, Constants.SolutionFolderFileName);
                         if (File.Exists(solutionFolderFile))
                         {
                             folderChain = File.ReadAllLines(solutionFolderFile);
@@ -893,7 +927,9 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                     }
                 }
 
-                var folder = root;
+                var (repoName, solutionName) = tagsByAssembly[assemblyId];
+
+                var folder = Program.GetSolutionExplorerGroupingFolder(root, repoName, solutionName, distinctRepoCount, solutionCountsByRepo);
                 if (folderChain != null)
                 {
                     foreach (var segment in folderChain)
@@ -907,11 +943,58 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
                 // ProjectSkeleton.Name only affects sort order in the non-flattened tree (WriteFolder
                 // renders by AssemblyName regardless) -- the assemblyId is a reasonable stand-in for the
-                // Roslyn project display name we no longer have access to at merge time.
-                folder.Add(new ProjectSkeleton(assemblyId, assemblyId));
+                // Roslyn project display name we no longer have access to at merge time. RepoName is read
+                // back from the same per-project ProjectInfo.txt (Constants.ProjectInfoFileName) that the
+                // ordinary single-config ProjectFinalizer.ReadProjectInfo reads, so /repoPath tags survive
+                // the config merge instead of silently dropping out of SolutionExplorer.html.
+                folder.Add(new ProjectSkeleton(assemblyId, assemblyId, repoName));
             }
 
             return root;
+        }
+
+        /// <summary>
+        /// Reads the RepoName=/SolutionName= lines Pass1's ProjectGenerator.GenerateProjectInfo persists
+        /// to each project's ProjectInfo.txt (see <see cref="Constants.ProjectInfoFileName"/>), mirroring
+        /// ProjectFinalizer.ReadProjectInfo's own read of the same file for the non-config-merge path.
+        /// Primary-config-first, then falls back to any other registered config, same order/rationale as
+        /// the folder-chain lookup above -- a project's tags shouldn't disappear just because the primary
+        /// config happens to lack this file (e.g. the non-primary-only-project case).
+        /// </summary>
+        private static Tuple<string, string> ReadRepoAndSolutionName(
+            IReadOnlyDictionary<string, string> configObjRoots,
+            IReadOnlyList<string> orderedConfigs,
+            string primaryConfig,
+            string assemblyId)
+        {
+            var tags = ReadRepoAndSolutionNameFromConfig(configObjRoots[primaryConfig], assemblyId);
+            if (tags == null)
+            {
+                foreach (var config in orderedConfigs)
+                {
+                    tags = ReadRepoAndSolutionNameFromConfig(configObjRoots[config], assemblyId);
+                    if (tags != null)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            return tags ?? Tuple.Create(string.Empty, string.Empty);
+        }
+
+        private static Tuple<string, string> ReadRepoAndSolutionNameFromConfig(string configObjRoot, string assemblyId)
+        {
+            var projectInfoFile = Path.Combine(configObjRoot, assemblyId, Constants.ProjectInfoFileName + ".txt");
+            if (!File.Exists(projectInfoFile))
+            {
+                return null;
+            }
+
+            var lines = File.ReadAllLines(projectInfoFile);
+            return Tuple.Create(
+                Serialization.ReadValue(lines, "RepoName") ?? string.Empty,
+                Serialization.ReadValue(lines, "SolutionName") ?? string.Empty);
         }
 
         /// <summary>
@@ -993,6 +1076,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             IReadOnlyDictionary<string, int> mergedReferencingCounts)
         {
             var assembliesAndProjects = new List<Tuple<string, string>>();
+            var repoAndSolutionNamesByAssembly = new Dictionary<string, Tuple<string, string>>(StringComparer.OrdinalIgnoreCase);
             foreach (var assemblyId in projectNames)
             {
                 var projectInfoFile = Path.Combine(websiteDestinationFolder, assemblyId, Constants.ProjectInfoFileName + ".txt");
@@ -1001,12 +1085,20 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 {
                     var lines = File.ReadAllLines(projectInfoFile);
                     projectInfoLine = Serialization.ReadValue(lines, "ProjectSourcePath");
+                    repoAndSolutionNamesByAssembly[assemblyId] = Tuple.Create(
+                        Serialization.ReadValue(lines, "RepoName") ?? "",
+                        Serialization.ReadValue(lines, "SolutionName") ?? "");
                 }
 
                 assembliesAndProjects.Add(Tuple.Create(assemblyId, projectInfoLine));
             }
 
-            Serialization.WriteProjectMap(websiteDestinationFolder, assembliesAndProjects, mergedReferencingCounts.ToDictionary(kvp => kvp.Key, kvp => kvp.Value));
+            // This rewrite recomputes the cross-config MERGED referencing counts (mergedReferencingCounts
+            // above) and must carry forward the repo/solution tags FinalizeProjects' own CreateProjectMap
+            // already wrote into this same Assemblies.txt -- otherwise this second write silently wipes
+            // them back out, exactly the kind of drop ComputeMergedSolutionExplorerRoot's ReadRepoName fix
+            // was written to prevent for SolutionExplorer.html.
+            Serialization.WriteProjectMap(websiteDestinationFolder, assembliesAndProjects, mergedReferencingCounts.ToDictionary(kvp => kvp.Key, kvp => kvp.Value), repoAndSolutionNamesByAssembly);
         }
     }
 }

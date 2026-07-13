@@ -249,6 +249,99 @@ namespace HtmlGenerator.Tests
         }
 
         [TestMethod]
+        public void Finalize_WritesSolutionExplorer_WithRepoNameFromProjectInfo_ForEveryMergedProject()
+        {
+            // Regression test for a real bug found while validating the config selector against the
+            // repo-scoped-search feature together: ComputeMergedSolutionExplorerRoot only reconstructed
+            // each project's folder chain from SolutionFolder.txt and never read back RepoName from the
+            // same ProjectInfo.txt the ordinary (non-config) ProjectFinalizer.ReadProjectInfo already
+            // reads it from -- so /repoPath + /config used together silently dropped every data-repo
+            // tag from the merged SolutionExplorer.html. Two projects, tagged with two different repos,
+            // and neither is the primary (linux) config's own -- exercising both the primary-found and
+            // fallback-config-found branches of ComputeMergedSolutionExplorerRoot.
+            CreateAssemblyFixture(linuxObjRoot, "Utils", referencedAssemblies: null, repoName: "RepoA");
+            CreateAssemblyFixture(windowsObjRoot, "Utils", referencedAssemblies: null, repoName: "RepoA");
+            WriteProjectExplorerWithAdjacentRootFolderDiv(linuxObjRoot, "Utils");
+
+            // "WindowsOnlyProject" exists only under windows (the fallback-config-found branch), tagged
+            // with a different repo -- must still surface its own repo tag, not RepoA's or none at all.
+            CreateAssemblyFixture(windowsObjRoot, "WindowsOnlyProject", referencedAssemblies: new[] { "Utils" }, repoName: "RepoB");
+            WriteProjectExplorerWithAdjacentRootFolderDiv(windowsObjRoot, "WindowsOnlyProject");
+
+            var configObjRoots = new Dictionary<string, string> { ["linux"] = linuxObjRoot, ["windows"] = windowsObjRoot };
+
+            ConfigAwareProjectFinalizer.Finalize(configObjRoots, websiteDestinationFolder, emitAssemblyList: false, federation: new Federation());
+
+            var solutionExplorerHtml = File.ReadAllText(Path.Combine(websiteDestinationFolder, Constants.SolutionExplorer + ".html"));
+
+            // Utils' RepoName is read from ProjectInfo.txt via the primary (linux) config and must
+            // survive the merge.
+            solutionExplorerHtml.ShouldContain("data-repo=\"RepoA\"");
+
+            // WindowsOnlyProject's RepoName is only found via the fallback (windows) config, since linux
+            // never generated this project, and must also survive the merge.
+            solutionExplorerHtml.ShouldContain("data-repo=\"RepoB\"");
+        }
+
+        [TestMethod]
+        public void Finalize_WritesAssembliesTxt_WithRepoNameSurvivingTheReferencingCountRewrite()
+        {
+            // Regression test for the sibling bug to the one above, found in the same validation pass:
+            // SolutionFinalizer.CreateProjectMap (via FinalizeProjects) writes Assemblies.txt with the
+            // correct repo/solution tags first, but PatchCrossConfigUsedByAndAggregates always runs next
+            // and its RewriteProjectMapReferencingCounts re-writes the SAME Assemblies.txt a second time
+            // (to patch in cross-config-merged referencing counts) -- originally without threading the
+            // repo/solution tags through at all, silently erasing what CreateProjectMap had just written
+            // moments earlier and leaving /api/repos permanently empty for any config-merged site.
+            CreateAssemblyFixture(linuxObjRoot, "Utils", referencedAssemblies: null, repoName: "RepoA");
+            CreateAssemblyFixture(windowsObjRoot, "Utils", referencedAssemblies: null, repoName: "RepoA");
+
+            CreateAssemblyFixture(linuxObjRoot, "App", referencedAssemblies: new[] { "Utils" }, repoName: "RepoB");
+            CreateAssemblyFixture(windowsObjRoot, "App", referencedAssemblies: new[] { "Utils" }, repoName: "RepoB");
+
+            var configObjRoots = new Dictionary<string, string> { ["linux"] = linuxObjRoot, ["windows"] = windowsObjRoot };
+
+            ConfigAwareProjectFinalizer.Finalize(configObjRoots, websiteDestinationFolder, emitAssemblyList: false, federation: new Federation());
+
+            var assembliesFile = Path.Combine(websiteDestinationFolder, Constants.MasterAssemblyMap + ".txt");
+            File.Exists(assembliesFile).ShouldBeTrue(
+                "Assemblies.txt must be written unconditionally by CreateProjectMap regardless of emitAssemblyList.");
+
+            var assembliesText = File.ReadAllText(assembliesFile);
+            assembliesText.Contains(";RepoA;").ShouldBeTrue(
+                "Utils' repo tag must survive RewriteProjectMapReferencingCounts' second write to Assemblies.txt. Actual: " + assembliesText);
+            assembliesText.Contains(";RepoB;").ShouldBeTrue(
+                "App's repo tag must survive RewriteProjectMapReferencingCounts' second write to Assemblies.txt. Actual: " + assembliesText);
+        }
+
+        [TestMethod]
+        public void Finalize_GroupsSolutionExplorer_UnderRepoFolders_WhenTheMergedSiteSpansMultipleRepos()
+        {
+            // The Repo/Solution Solution Explorer grouping feature (SolutionExplorerGroupingTests,
+            // Program.GetSolutionExplorerGroupingFolder) is computed by Program.IndexSolutionsAsync
+            // during a single Pass1 run, over that run's own inputs -- ComputeMergedSolutionExplorerRoot
+            // must recompute the same grouping over the MERGED (cross-config) project set, or a
+            // config-merged site that also spans multiple repos would silently lose the grouping even
+            // though the ordinary single-config path would have shown it.
+            CreateAssemblyFixture(linuxObjRoot, "Utils", referencedAssemblies: null, repoName: "ClangSharp");
+            CreateAssemblyFixture(windowsObjRoot, "Utils", referencedAssemblies: null, repoName: "ClangSharp");
+
+            CreateAssemblyFixture(linuxObjRoot, "App", referencedAssemblies: new[] { "Utils" }, repoName: "LLVMSharp");
+            CreateAssemblyFixture(windowsObjRoot, "App", referencedAssemblies: new[] { "Utils" }, repoName: "LLVMSharp");
+
+            var configObjRoots = new Dictionary<string, string> { ["linux"] = linuxObjRoot, ["windows"] = windowsObjRoot };
+
+            ConfigAwareProjectFinalizer.Finalize(configObjRoots, websiteDestinationFolder, emitAssemblyList: false, federation: new Federation());
+
+            var solutionExplorerHtml = File.ReadAllText(Path.Combine(websiteDestinationFolder, Constants.SolutionExplorer + ".html"));
+
+            solutionExplorerHtml.Contains("<div class=\"folderTitle repoTitle\" data-repo=\"ClangSharp\">ClangSharp</div>").ShouldBeTrue(
+                "Utils must be nested under a ClangSharp repo folder now that the merged site spans two repos. Actual: " + solutionExplorerHtml);
+            solutionExplorerHtml.Contains("<div class=\"folderTitle repoTitle\" data-repo=\"LLVMSharp\">LLVMSharp</div>").ShouldBeTrue(
+                "App must be nested under an LLVMSharp repo folder now that the merged site spans two repos. Actual: " + solutionExplorerHtml);
+        }
+
+        [TestMethod]
         public void Finalize_StagesAFile_ThatExistsOnlyUnderANonPrimaryConfig()
         {
             // "Shared" exists under both configs, but "Windows.cs" (e.g. a platform-specific partial
@@ -566,23 +659,46 @@ namespace HtmlGenerator.Tests
             return count;
         }
 
-        private static void CreateAssemblyFixture(string objRoot, string assemblyName, string[] referencedAssemblies)
+        /// <summary>
+        /// Rewrites this fixture's ProjectExplorer.html with the exact "&lt;/div&gt;&lt;div&gt;" adjacency
+        /// real Pass1 output produces (no newline between the rootFolder title and its content div) --
+        /// SolutionFinalizer.GetProjectExplorerText's data-repo patch matches that literal substring, and
+        /// CreateAssemblyFixture's own newline-separated synthetic HTML never triggers it. Only used by
+        /// the repo-tag-survives-merge regression test; other tests here rely on CreateAssemblyFixture's
+        /// line-broken format for their own (unrelated) insertion-point scans.
+        /// </summary>
+        private static void WriteProjectExplorerWithAdjacentRootFolderDiv(string objRoot, string assemblyName)
+        {
+            File.WriteAllText(
+                Path.Combine(objRoot, assemblyName, Constants.ProjectExplorer + ".html"),
+                $"<div id=\"rootFolder\" class=\"projectCS\">{assemblyName}</div><div>" +
+                "<div class=\"folderTitle\">References</div><div class=\"folder\">" +
+                "</div>" +
+                "</div>" +
+                "<script></script>");
+        }
+
+        private static void CreateAssemblyFixture(string objRoot, string assemblyName, string[] referencedAssemblies, string repoName = null)
         {
             var assemblyFolder = Path.Combine(objRoot, assemblyName);
             Directory.CreateDirectory(Path.Combine(assemblyFolder, Constants.ReferencesFileName));
 
-            File.WriteAllLines(
-                Path.Combine(assemblyFolder, Constants.ProjectInfoFileName + ".txt"),
-                new[]
-                {
-                    "ProjectSourcePath=C:\\src\\" + assemblyName,
-                    "DocumentCount=1",
-                    "LinesOfCode=10",
-                    "BytesOfCode=100",
-                    "DeclaredSymbols=0",
-                    "DeclaredTypes=0",
-                    "PublicTypes=0",
-                });
+            var projectInfoLines = new List<string>
+            {
+                "ProjectSourcePath=C:\\src\\" + assemblyName,
+                "DocumentCount=1",
+                "LinesOfCode=10",
+                "BytesOfCode=100",
+                "DeclaredSymbols=0",
+                "DeclaredTypes=0",
+                "PublicTypes=0",
+            };
+            if (repoName != null)
+            {
+                projectInfoLines.Add("RepoName=" + repoName);
+            }
+
+            File.WriteAllLines(Path.Combine(assemblyFolder, Constants.ProjectInfoFileName + ".txt"), projectInfoLines);
 
             if (referencedAssemblies != null && referencedAssemblies.Length > 0)
             {

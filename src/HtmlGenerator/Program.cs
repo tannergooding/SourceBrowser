@@ -234,7 +234,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                     StringComparer.Ordinal);
 
                 ConfigAwareProjectFinalizer.Finalize(configObjRoots, Paths.WebsiteDestinationFolder, emitAssemblyList, federation, axisTagsByConfig);
-                WebsiteFinalizer.Finalize(outRoot, emitAssemblyList, federation);
+                WebsiteFinalizer.Finalize(outRoot, emitAssemblyList, federation, showBranding);
             });
         }
 

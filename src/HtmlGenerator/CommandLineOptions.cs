@@ -26,7 +26,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             string rootPath,
             bool includeSourceGeneratedDocuments,
             bool suppressWarnings,
-            bool showBranding)
+            bool showBranding,
+            bool incremental)
         {
             SolutionDestinationFolder = solutionDestinationFolder;
             Projects = projects;
@@ -46,6 +47,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             IncludeSourceGeneratedDocuments = includeSourceGeneratedDocuments;
             SuppressWarnings = suppressWarnings;
             ShowBranding = showBranding;
+            Incremental = incremental;
         }
 
         public string SolutionDestinationFolder { get; }
@@ -74,12 +76,19 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         public bool SuppressWarnings { get; }
 
         /// <summary>
+        /// <summary>
         /// Shows the .NET/Microsoft logo marks in the generated site's header. Off by default --
         /// most sites generated with this tool aren't Microsoft's own code, so the branding is
         /// opt-in via /showBranding rather than something every consumer has to remember to hide.
         /// The "Source Browser" title/home link itself is unaffected either way.
         /// </summary>
         public bool ShowBranding { get; }
+
+        /// <summary>
+        /// /incremental -- skip regenerating/re-copying assemblies whose Pass1 staleness key is
+        /// unchanged since the last run into the same destination folder. See <see cref="ProjectStaleness"/>.
+        /// </summary>
+        public bool Incremental { get; }
 
         public static CommandLineOptions Parse(params string[] args)
         {
@@ -101,6 +110,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             var rootPath = (string)null;
             var suppressWarnings = false;
             var showBranding = false;
+            var incremental = false;
 
             foreach (var arg in args)
             {
@@ -192,6 +202,12 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 if (arg == "/force")
                 {
                     force = true;
+                    continue;
+                }
+
+                if (string.Equals(arg, "/incremental", StringComparison.OrdinalIgnoreCase))
+                {
+                    incremental = true;
                     continue;
                 }
 
@@ -360,7 +376,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 rootPath,
                 includeSourceGeneratedDocuments,
                 suppressWarnings,
-                showBranding);
+                showBranding,
+                incremental);
         }
 
         private static void AddProject(List<string> projects, string path)

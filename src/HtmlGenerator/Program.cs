@@ -32,6 +32,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             SolutionGenerator.LoadPlugins = options.LoadPlugins;
             SolutionGenerator.ExcludeTests = options.ExcludeTests;
             Log.SuppressWarnings = options.SuppressWarnings;
+            Configuration.Incremental = options.Incremental;
 
             AssertTraceListener.Register();
             AppDomain.CurrentDomain.FirstChanceException += FirstChanceExceptionHandler.HandleFirstChanceException;
@@ -45,17 +46,24 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 Paths.SolutionDestinationFolder = Path.Combine(Microsoft.SourceBrowser.Common.Paths.BaseAppFolder, "index");
             }
 
-            var websiteDestination = Paths.SolutionDestinationFolder;
+            var runOutputRoot = Paths.SolutionDestinationFolder;
 
-            // Warning, this will delete and recreate your destination folder
-            Paths.PrepareDestinationFolder(options.Force);
+            // Warning, unless /incremental is passed, this will delete and recreate your destination folder
+            Paths.PrepareDestinationFolder(options.Force, options.Incremental);
 
-            Paths.SolutionDestinationFolder = Path.Combine(Paths.SolutionDestinationFolder, "index"); //The actual index files need to be written to the "index" subdirectory
+            // The finalized website is still written to the "index" subdirectory, exactly as before, so
+            // nothing about the served output's location changes. Pass1, however, now writes its raw,
+            // per-assembly index to a separate "obj" subdirectory that Pass2 treats as read-only input --
+            // Pass2 copies each assembly's folder from "obj" into "index" before finalizing it, so "obj"
+            // stays a pure, re-derivable artifact that no later step mutates in place.
+            Paths.WebsiteDestinationFolder = Path.Combine(runOutputRoot, "index");
+            Paths.SolutionDestinationFolder = Path.Combine(runOutputRoot, "obj");
 
             Directory.CreateDirectory(Paths.SolutionDestinationFolder);
+            Directory.CreateDirectory(Paths.WebsiteDestinationFolder);
 
-            Log.ErrorLogFilePath = Path.Combine(Paths.SolutionDestinationFolder, Log.ErrorLogFile);
-            Log.MessageLogFilePath = Path.Combine(Paths.SolutionDestinationFolder, Log.MessageLogFile);
+            Log.ErrorLogFilePath = Path.Combine(Paths.WebsiteDestinationFolder, Log.ErrorLogFile);
+            Log.MessageLogFilePath = Path.Combine(Paths.WebsiteDestinationFolder, Log.MessageLogFile);
 
             using (Disposable.Timing("Generating website"))
             {
@@ -86,7 +94,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                         options.IncludeSourceGeneratedDocuments);
                 }
                 FinalizeProjects(options.EmitAssemblyList, federation);
-                WebsiteFinalizer.Finalize(websiteDestination, options.EmitAssemblyList, federation, options.ShowBranding);
+                WebsiteFinalizer.Finalize(runOutputRoot, options.EmitAssemblyList, federation, options.ShowBranding);
             }
             Log.Close();
 
@@ -100,6 +108,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             Console.WriteLine("Usage: HtmlGenerator "
                 + "[/out:<outputdirectory>] "
                 + "[/force] "
+                + "[/incremental] "
                 + "[/useplugins] "
                 + "[/noplugins] "
                 + "[/noplugin:Git] "
@@ -227,21 +236,34 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                         continue;
                     }
 
-                    using (var solutionGenerator = await SolutionGenerator.CreateAsync(
-                        path,
-                        Paths.SolutionDestinationFolder,
-                        cancellationToken,
-                        properties: properties.ToImmutableDictionary(),
-                        federation: federation,
-                        serverPathMappings: serverPathMappings,
-                        pluginBlacklist: pluginBlacklist,
-                        doNotIncludeReferencedProjects: doNotIncludeReferencedProjects,
-                        includeSourceGeneratedDocuments: includeSourceGeneratedDocuments))
+                    // Split out separately-timed sub-phases so an /incremental run's log can distinguish
+                    // the MSBuildWorkspace load/compile cost (paid every run, regardless of staleness) from
+                    // Pass1's actual per-assembly generation/write cost (what staleness gating elides for
+                    // unchanged projects) -- see ProjectStaleness/ProjectGenerator.
+                    SolutionGenerator solutionGenerator;
+                    using (Disposable.Timing("Loading workspace for " + path))
+                    {
+                        solutionGenerator = await SolutionGenerator.CreateAsync(
+                            path,
+                            Paths.SolutionDestinationFolder,
+                            cancellationToken,
+                            properties: properties.ToImmutableDictionary(),
+                            federation: federation,
+                            serverPathMappings: serverPathMappings,
+                            pluginBlacklist: pluginBlacklist,
+                            doNotIncludeReferencedProjects: doNotIncludeReferencedProjects,
+                            includeSourceGeneratedDocuments: includeSourceGeneratedDocuments);
+                    }
+
+                    using (solutionGenerator)
                     {
                         solutionGenerator.GlobalAssemblyList = assemblyNames;
                         solutionGenerator.RepoName = repoName;
                         solutionGenerator.SolutionName = solutionName;
-                        await solutionGenerator.GenerateAsync(cancellationToken, processedAssemblyList, solutionFolder);
+                        using (Disposable.Timing("Pass1 writing for " + path))
+                        {
+                            await solutionGenerator.GenerateAsync(cancellationToken, processedAssemblyList, solutionFolder);
+                        }
                     }
                 }
 
@@ -329,7 +351,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             {
                 try
                 {
-                    var solutionFinalizer = new SolutionFinalizer(Paths.SolutionDestinationFolder);
+                    var solutionFinalizer = new SolutionFinalizer(Paths.SolutionDestinationFolder, Paths.WebsiteDestinationFolder);
                     solutionFinalizer.FinalizeProjects(emitAssemblyList, federation, mergedSolutionExplorerRoot);
                 }
                 catch (Exception ex)

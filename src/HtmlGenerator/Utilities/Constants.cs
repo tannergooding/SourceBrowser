@@ -57,5 +57,13 @@
         public static readonly string MSBuildFiles = "MSBuildFiles";
         public static readonly string TypeScriptFiles = "TypeScriptFiles";
         public static readonly string AssemblyPaths = "AssemblyPaths.txt";
+
+        /// <summary>
+        /// Per-assembly staleness key written by Pass1 (see <see cref="ProjectStaleness"/>) next to that
+        /// assembly's raw index, and copied by Pass2 alongside the finalized output. Comparing the two
+        /// copies is how incremental runs decide whether an assembly's Pass1 output (and Pass2 copy) can
+        /// be skipped entirely.
+        /// </summary>
+        public static readonly string StalenessKeyFileName = "StalenessKey";
     }
 }

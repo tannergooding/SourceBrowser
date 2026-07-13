@@ -14,13 +14,26 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 {
     public partial class SolutionFinalizer
     {
+        /// <summary>
+        /// Pass1's raw, per-assembly index -- read-only input to Pass2. Nothing Pass2 does is ever
+        /// allowed to write back here; it's the re-derivable artifact a re-run of Pass1 would recreate.
+        /// </summary>
+        public string SourceIndexFolder;
+
+        /// <summary>
+        /// The finalized, servable output root that Pass2 writes into. Pass2 copies each discovered
+        /// assembly's folder from <see cref="SourceIndexFolder"/> here before patching/finalizing it,
+        /// so all cross-assembly mutation (references, "Used By" backlinks, aggregate indexes, etc.)
+        /// happens only on this copy.
+        /// </summary>
         public string SolutionDestinationFolder;
         public IEnumerable<ProjectFinalizer> projects;
         public readonly Dictionary<string, ProjectFinalizer> assemblyNameToProjectMap = new Dictionary<string, ProjectFinalizer>();
 
-        public SolutionFinalizer(string rootPath)
+        public SolutionFinalizer(string sourceIndexFolder, string outputFolder)
         {
-            this.SolutionDestinationFolder = rootPath;
+            this.SourceIndexFolder = sourceIndexFolder;
+            this.SolutionDestinationFolder = outputFolder;
             this.projects = DiscoverProjects()
                             .OrderBy(p => p.AssemblyId, StringComparer.OrdinalIgnoreCase)
                             .ToArray();
@@ -63,7 +76,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
         private IEnumerable<ProjectFinalizer> DiscoverProjects()
         {
-            var directories = Directory.GetDirectories(SolutionDestinationFolder);
+            var directories = Directory.GetDirectories(SourceIndexFolder);
             foreach (var directory in directories)
             {
                 var referenceDirectory = Path.Combine(directory, Constants.ReferencesFileName);
@@ -162,23 +175,28 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             {
                 foreach (var project in this.projects)
                 {
+                    var fileName = Path.Combine(project.ProjectDestinationFolder, Constants.ReferencingAssemblyList + ".txt");
                     if (project.ReferencingAssemblies.Count > 0 && project.ReferencingAssemblies.Count < 100)
                     {
-                        var fileName = Path.Combine(project.ProjectDestinationFolder, Constants.ReferencingAssemblyList + ".txt");
                         File.WriteAllLines(fileName, project.ReferencingAssemblies);
-                        PatchProjectExplorer(project);
                     }
+                    else if (File.Exists(fileName))
+                    {
+                        // No longer referenced (or now referenced by too many assemblies to list) --
+                        // remove any stale list left over from a previous run against a retained project.
+                        File.Delete(fileName);
+                    }
+
+                    // Always re-patch -- even for a project with no current referencing assemblies -- so
+                    // that a stale "Used By" block from a previous run against a retained project gets
+                    // removed once its last referencing assembly drops the reference.
+                    PatchProjectExplorer(project);
                 }
             }
         }
 
         private void PatchProjectExplorer(ProjectFinalizer project)
         {
-            if (project.ReferencingAssemblies.Count == 0 || project.ReferencingAssemblies.Count > 100)
-            {
-                return;
-            }
-
             var fileName = Path.Combine(project.ProjectDestinationFolder, Constants.ProjectExplorer + ".html");
             if (!File.Exists(fileName))
             {
@@ -186,37 +204,55 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             }
 
             var sourceLines = File.ReadAllLines(fileName);
-            List<string> lines = new List<string>(sourceLines.Length + project.ReferencingAssemblies.Count + 2);
 
+            // Strip any "Used By" block a previous Pass2 run may have already injected -- necessary for
+            // idempotency whether ProjectExplorer.html is a fresh copy from Pass1 (which never has one) or
+            // a retained copy from a previous run (which may have one reflecting a now-stale referencing
+            // assembly set).
+            var lines = StripExistingUsedByBlock(sourceLines);
+
+            bool shouldInsert = project.ReferencingAssemblies.Count > 0 && project.ReferencingAssemblies.Count < 100;
+            if (!shouldInsert)
+            {
+                if (lines.Count != sourceLines.Length)
+                {
+                    // A stale block existed but no longer applies -- persist the removal.
+                    File.WriteAllLines(fileName, lines);
+                }
+
+                return;
+            }
+
+            var result = new List<string>(lines.Count + project.ReferencingAssemblies.Count + 2);
             RelativeState state = RelativeState.Before;
-            foreach (var sourceLine in sourceLines)
+            foreach (var line in lines)
             {
                 switch (state)
                 {
                     case RelativeState.Before:
-                        if (sourceLine == "<div class=\"folderTitle\">References</div><div class=\"folder\">")
+                        if (line == "<div class=\"folderTitle\">References</div><div class=\"folder\">")
                         {
                             state = RelativeState.Inside;
                         }
 
                         break;
                     case RelativeState.Inside:
-                        if (sourceLine == "</div>")
+                        if (line == "</div>")
                         {
                             state = RelativeState.InsertionPoint;
                         }
 
                         break;
                     case RelativeState.InsertionPoint:
-                        lines.Add("<div class=\"folderTitle\">Used By</div><div class=\"folder\">");
+                        result.Add("<div class=\"folderTitle\">Used By</div><div class=\"folder\">");
 
                         foreach (var referencingAssembly in project.ReferencingAssemblies)
                         {
                             string referenceHtml = Markup.GetProjectExplorerReference("/#" + referencingAssembly, referencingAssembly);
-                            lines.Add(referenceHtml);
+                            result.Add(referenceHtml);
                         }
 
-                        lines.Add("</div>");
+                        result.Add("</div>");
 
                         state = RelativeState.After;
                         break;
@@ -226,10 +262,41 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                         break;
                 }
 
-                lines.Add(sourceLine);
+                result.Add(line);
             }
 
-            File.WriteAllLines(fileName, lines);
+            File.WriteAllLines(fileName, result);
+        }
+
+        /// <summary>
+        /// Removes a previously-injected "Used By" block, if any (see <see cref="PatchProjectExplorer"/>),
+        /// so that re-patching is a pure function of (base explorer content without a stale block, current
+        /// referencing assemblies) regardless of how many times it's been patched before.
+        /// </summary>
+        private static List<string> StripExistingUsedByBlock(string[] sourceLines)
+        {
+            const string usedByHeader = "<div class=\"folderTitle\">Used By</div><div class=\"folder\">";
+
+            var result = new List<string>(sourceLines.Length);
+            for (int i = 0; i < sourceLines.Length; i++)
+            {
+                if (sourceLines[i] == usedByHeader)
+                {
+                    // Skip forward to (and including) this block's closing "</div>" line.
+                    int j = i + 1;
+                    while (j < sourceLines.Length && sourceLines[j] != "</div>")
+                    {
+                        j++;
+                    }
+
+                    i = j;
+                    continue;
+                }
+
+                result.Add(sourceLines[i]);
+            }
+
+            return result;
         }
 
         private enum RelativeState

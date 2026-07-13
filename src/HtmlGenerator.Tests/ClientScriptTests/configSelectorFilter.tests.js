@@ -170,6 +170,10 @@ function sbTestLoadPureFunctionsUnderTest() {
         + "\n"
         + sbTestExtractFunction(source, "sbParseConfigList")
         + "\n"
+        + sbTestExtractFunction(source, "sbDeriveSelectedConfigsFromAxisSelections")
+        + "\n"
+        + sbTestExtractFunction(source, "sbContains")
+        + "\n"
         + sbTestExtractArrayStatement(source, "supportedFileExtensions")
         + "\n"
         + sbTestExtractFunction(source, "endsWithIgnoreCase")
@@ -188,6 +192,8 @@ function sbTestLoadPureFunctionsUnderTest() {
     return {
         sbConfigFilterMatches: sbConfigFilterMatches,
         sbParseConfigList: sbParseConfigList,
+        sbDeriveSelectedConfigsFromAxisSelections: sbDeriveSelectedConfigsFromAxisSelections,
+        sbContains: sbContains,
         getExtension: getExtension,
         isFile: isFile
     };
@@ -197,6 +203,8 @@ function sbTestRun() {
     var underTest = sbTestLoadPureFunctionsUnderTest();
     var sbConfigFilterMatches = underTest.sbConfigFilterMatches;
     var sbParseConfigList = underTest.sbParseConfigList;
+    var sbDeriveSelectedConfigsFromAxisSelections = underTest.sbDeriveSelectedConfigsFromAxisSelections;
+    var sbContains = underTest.sbContains;
     var getExtension = underTest.getExtension;
     var isFile = underTest.isFile;
 
@@ -257,6 +265,43 @@ function sbTestRun() {
     assert("isFile true for ordinary source file", isFile("Demo/EnvHelper.cs"), true);
     assert("isFile true for config-variant suffixed file (the regression)", isFile("Demo/EnvHelper.cs~87f21542"), true);
     assert("isFile true for config-variant suffixed file with .html", isFile("Demo/EnvHelper.cs~87f21542.html"), true);
+
+    // sbDeriveSelectedConfigsFromAxisSelections -- the multi-axis panel's pure
+    // "which flat config names match this per-axis selection" derivation (#104
+    // multi-axis scaling: os x arch and beyond, not just one flat dimension).
+    var configAxisValues = {
+        "windows-x64": { os: "windows", arch: "x64" },
+        "windows-arm64": { os: "windows", arch: "arm64" },
+        "linux-x64": { os: "linux", arch: "x64" },
+        "linux-arm64": { os: "linux", arch: "arm64" }
+    };
+    var allConfigs = ["windows-x64", "windows-arm64", "linux-x64", "linux-arm64"];
+
+    assert(
+        "no restriction on any axis -> every config matches",
+        sbDeriveSelectedConfigsFromAxisSelections({ os: [], arch: [] }, configAxisValues, allConfigs).length,
+        4);
+
+    var osWindowsOnly = sbDeriveSelectedConfigsFromAxisSelections({ os: ["windows"], arch: [] }, configAxisValues, allConfigs);
+    assert("os=windows restriction -> 2 matches", osWindowsOnly.length, 2);
+    assert("os=windows restriction includes windows-x64", sbContains(osWindowsOnly, "windows-x64"), true);
+    assert("os=windows restriction excludes linux-x64", sbContains(osWindowsOnly, "linux-x64"), false);
+
+    var windowsX64Only = sbDeriveSelectedConfigsFromAxisSelections({ os: ["windows"], arch: ["x64"] }, configAxisValues, allConfigs);
+    assert("os=windows AND arch=x64 -> exactly 1 match (AND across axes)", windowsX64Only.length, 1);
+    assert("os=windows AND arch=x64 -> matches windows-x64", windowsX64Only[0], "windows-x64");
+
+    var x64Either = sbDeriveSelectedConfigsFromAxisSelections({ os: [], arch: ["x64"] }, configAxisValues, allConfigs);
+    assert("arch=x64 only -> 2 matches (OR within an axis is moot with 1 value, but restriction still applies)", x64Either.length, 2);
+
+    var multiOsAxis = sbDeriveSelectedConfigsFromAxisSelections({ os: ["windows", "linux"], arch: ["x64"] }, configAxisValues, allConfigs);
+    assert("os=[windows,linux] (both values) AND arch=x64 -> OR within the os axis matches both", multiOsAxis.length, 2);
+
+    // A config with no axis tags at all (absent from configAxisValues) can't
+    // be excluded by an axis it doesn't participate in -- it always matches.
+    var mixedConfigs = allConfigs.concat(["legacy-untagged"]);
+    var untaggedAlwaysMatches = sbDeriveSelectedConfigsFromAxisSelections({ os: ["windows"], arch: [] }, configAxisValues, mixedConfigs);
+    assert("untagged config always matches regardless of axis restriction", sbContains(untaggedAlwaysMatches, "legacy-untagged"), true);
 
     WScript.Echo(passed + " passed, " + failed + " failed");
     if (failed > 0) {

@@ -159,11 +159,19 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
     {
         /// <param name="configObjRoots">configName -> that config's obj/&lt;config&gt; root path. Must contain 2+ entries.</param>
         /// <param name="websiteDestinationFolder">The shared "index/" folder every config's run writes into.</param>
+        /// <param name="axisTagsByConfig">
+        /// configName -> its structured axis tags (e.g. {"os":"windows","arch":"x64"}), from
+        /// <see cref="ConfigRegistryEntry.AxisTags"/>. Null or a config missing from this map means that
+        /// config has no axis tags -- the client falls back to treating it as one flat, ungrouped entry.
+        /// Purely a client-presentation concern (see <see cref="WriteRegisteredConfigsForClient"/>); does
+        /// not affect any server-side merge behavior above.
+        /// </param>
         public static void Finalize(
             IReadOnlyDictionary<string, string> configObjRoots,
             string websiteDestinationFolder,
             bool emitAssemblyList,
-            Federation federation)
+            Federation federation,
+            IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> axisTagsByConfig = null)
         {
             if (configObjRoots == null || configObjRoots.Count < 2)
             {
@@ -211,23 +219,94 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
             PatchCrossConfigUsedByAndAggregates(configObjRoots, websiteDestinationFolder);
             RewritePartialTypeDisambiguationPages(configObjRoots, websiteDestinationFolder, projectNames);
-            WriteRegisteredConfigsForClient(configObjRoots.Keys, websiteDestinationFolder);
+            WriteRegisteredConfigsForClient(configObjRoots.Keys, axisTagsByConfig, websiteDestinationFolder);
         }
 
         /// <summary>
         /// Writes <see cref="Constants.RegisteredConfigsFileName"/> at the website root -- the one piece
         /// of config metadata the merged site needs to expose to the BROWSER (everything else discussed
         /// in this type's remarks is server-side merge logic). The client config-selector fetches this
-        /// to know which configs exist, so it can render its picker; its absence (single/no-config sites
-        /// never call this method at all) is how the selector's bootstrap script knows to render
-        /// nothing rather than a single-option no-op UI. Hand-written as a minimal JSON array rather
-        /// than pulling in a serializer for two lines of output.
+        /// to know which configs exist (and, when present, how they group into axes like OS/Arch), so it
+        /// can render its picker; its absence (single/no-config sites never call this method at all) is
+        /// how the selector's bootstrap script knows to render nothing rather than a single-option no-op
+        /// UI. Hand-written as minimal JSON rather than pulling in a serializer for a handful of fields.
+        ///
+        /// Shape:
+        /// <code>
+        /// {
+        ///   "configs": ["linux-x64", "windows-x64"],
+        ///   "axes": { "os": ["linux", "windows"], "arch": ["x64"] },
+        ///   "configAxisValues": { "linux-x64": {"os":"linux","arch":"x64"}, "windows-x64": {"os":"windows","arch":"x64"} }
+        /// }
+        /// </code>
+        /// "axes"/"configAxisValues" are empty objects (not omitted) when no registered config carries
+        /// any axis tags -- the client renders one flat, ungrouped list of "configs" in that case, same
+        /// as before axis support existed. A config with no tags of its own is simply absent from
+        /// "configAxisValues" even when OTHER configs do have tags (a mixed site); the client groups the
+        /// tagged ones by axis and falls back to a flat entry for the rest, rather than silently dropping
+        /// it.
         /// </summary>
-        private static void WriteRegisteredConfigsForClient(IEnumerable<string> configs, string websiteDestinationFolder)
+        private static void WriteRegisteredConfigsForClient(
+            IEnumerable<string> configs,
+            IReadOnlyDictionary<string, IReadOnlyDictionary<string, string>> axisTagsByConfig,
+            string websiteDestinationFolder)
         {
             var orderedConfigs = configs.OrderBy(c => c, StringComparer.OrdinalIgnoreCase).ToList();
-            var json = "[" + string.Join(",", orderedConfigs.Select(c => "\"" + c.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"")) + "]";
-            File.WriteAllText(Path.Combine(websiteDestinationFolder, Constants.RegisteredConfigsFileName), json, Encoding.UTF8);
+
+            // axis name -> distinct values seen across all configs, each sorted for deterministic output.
+            var axisValues = new SortedDictionary<string, SortedSet<string>>(StringComparer.OrdinalIgnoreCase);
+            if (axisTagsByConfig != null)
+            {
+                foreach (var configName in orderedConfigs)
+                {
+                    if (!axisTagsByConfig.TryGetValue(configName, out var tags) || tags == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var kvp in tags)
+                    {
+                        if (!axisValues.TryGetValue(kvp.Key, out var values))
+                        {
+                            values = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                            axisValues[kvp.Key] = values;
+                        }
+
+                        values.Add(kvp.Value);
+                    }
+                }
+            }
+
+            var json = new StringBuilder();
+            json.Append('{');
+
+            json.Append("\"configs\":[");
+            json.Append(string.Join(",", orderedConfigs.Select(JsonString)));
+            json.Append("],");
+
+            json.Append("\"axes\":{");
+            json.Append(string.Join(",", axisValues.Select(kvp =>
+                JsonString(kvp.Key) + ":[" + string.Join(",", kvp.Value.Select(JsonString)) + "]")));
+            json.Append("},");
+
+            json.Append("\"configAxisValues\":{");
+            json.Append(string.Join(",", orderedConfigs
+                .Where(c => axisTagsByConfig != null && axisTagsByConfig.TryGetValue(c, out var tags) && tags != null && tags.Count > 0)
+                .Select(c =>
+                {
+                    var tags = axisTagsByConfig[c];
+                    return JsonString(c) + ":{" + string.Join(",", tags.Select(kvp => JsonString(kvp.Key) + ":" + JsonString(kvp.Value))) + "}";
+                })));
+            json.Append('}');
+
+            json.Append('}');
+
+            File.WriteAllText(Path.Combine(websiteDestinationFolder, Constants.RegisteredConfigsFileName), json.ToString(), Encoding.UTF8);
+        }
+
+        private static string JsonString(string value)
+        {
+            return "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
         }
 
         /// <summary>

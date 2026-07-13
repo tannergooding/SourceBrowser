@@ -389,7 +389,38 @@ namespace HtmlGenerator.Tests
             var configsFilePath = Path.Combine(websiteDestinationFolder, Constants.RegisteredConfigsFileName);
             File.Exists(configsFilePath).ShouldBeTrue(
                 "A config-aware merge must expose the registered config list at the website root so the client selector can discover it.");
-            File.ReadAllText(configsFilePath).ShouldBe("[\"linux\",\"windows\"]");
+
+            // No axis tags given (the common/default case, e.g. plain /config:linux, /config:windows)
+            // -- "axes"/"configAxisValues" are present but empty, so the client falls back to a flat,
+            // ungrouped list exactly like before axis support existed.
+            File.ReadAllText(configsFilePath).ShouldBe(
+                "{\"configs\":[\"linux\",\"windows\"],\"axes\":{},\"configAxisValues\":{}}");
+        }
+
+        [TestMethod]
+        public void Finalize_WritesRegisteredConfigsFile_WithAxisTags_WhenGiven()
+        {
+            CreateAssemblyFixture(linuxObjRoot, "Shared", referencedAssemblies: null);
+            CreateAssemblyFixture(windowsObjRoot, "Shared", referencedAssemblies: null);
+
+            var configObjRoots = new Dictionary<string, string> { ["linux-x64"] = linuxObjRoot, ["windows-x64"] = windowsObjRoot };
+            var axisTagsByConfig = new Dictionary<string, IReadOnlyDictionary<string, string>>
+            {
+                ["linux-x64"] = new Dictionary<string, string> { ["os"] = "linux", ["arch"] = "x64" },
+                ["windows-x64"] = new Dictionary<string, string> { ["os"] = "windows", ["arch"] = "x64" },
+            };
+
+            ConfigAwareProjectFinalizer.Finalize(configObjRoots, websiteDestinationFolder, emitAssemblyList: false, federation: new Federation(), axisTagsByConfig: axisTagsByConfig);
+
+            var configsFilePath = Path.Combine(websiteDestinationFolder, Constants.RegisteredConfigsFileName);
+            var json = File.ReadAllText(configsFilePath);
+
+            // "axes" collects the distinct values seen per axis across all configs, so the client can
+            // group its selector by axis (e.g. an "os" row and an "arch" row) instead of one flat,
+            // unstructured checkbox per config name.
+            json.ShouldContain("\"configs\":[\"linux-x64\",\"windows-x64\"]");
+            json.ShouldContain("\"axes\":{\"arch\":[\"x64\"],\"os\":[\"linux\",\"windows\"]}");
+            json.ShouldContain("\"configAxisValues\":{\"linux-x64\":{\"os\":\"linux\",\"arch\":\"x64\"},\"windows-x64\":{\"os\":\"windows\",\"arch\":\"x64\"}}");
         }
 
         [TestMethod]

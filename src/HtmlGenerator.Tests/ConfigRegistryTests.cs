@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using Microsoft.SourceBrowser.HtmlGenerator;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -104,6 +105,75 @@ namespace HtmlGenerator.Tests
             {
                 configs.ShouldContain("config" + i);
             }
+        }
+
+        [TestMethod]
+        public void ConfigRegisteredWithoutAxisTags_HasEmptyAxisTags()
+        {
+            ConfigRegistry.EnsureConfigRegistered(tempRoot, "windows");
+
+            var entries = ConfigRegistry.GetRegisteredConfigEntries(tempRoot);
+            entries.Count.ShouldBe(1);
+            entries[0].Name.ShouldBe("windows");
+            entries[0].AxisTags.ShouldBeEmpty();
+        }
+
+        [TestMethod]
+        public void ConfigRegisteredWithAxisTags_RoundTrips()
+        {
+            var axisTags = new Dictionary<string, string> { ["os"] = "windows", ["arch"] = "x64" };
+            ConfigRegistry.EnsureConfigRegistered(tempRoot, "windows-x64", axisTags);
+
+            var entries = ConfigRegistry.GetRegisteredConfigEntries(tempRoot);
+            entries.Count.ShouldBe(1);
+            entries[0].Name.ShouldBe("windows-x64");
+            entries[0].AxisTags.Count.ShouldBe(2);
+            entries[0].AxisTags["os"].ShouldBe("windows");
+            entries[0].AxisTags["arch"].ShouldBe("x64");
+
+            // GetRegisteredConfigs (names-only) is unaffected by axis tags being present.
+            ConfigRegistry.GetRegisteredConfigs(tempRoot).ShouldBe(new[] { "windows-x64" });
+        }
+
+        [TestMethod]
+        public void MixOfTaggedAndUntaggedConfigs_EachRetainsOwnTags()
+        {
+            ConfigRegistry.EnsureConfigRegistered(tempRoot, "windows-x64", new Dictionary<string, string> { ["os"] = "windows", ["arch"] = "x64" });
+            ConfigRegistry.EnsureConfigRegistered(tempRoot, "linux-x64", new Dictionary<string, string> { ["os"] = "linux", ["arch"] = "x64" });
+            ConfigRegistry.EnsureConfigRegistered(tempRoot, "legacy");
+
+            var entriesByName = new Dictionary<string, ConfigRegistryEntry>();
+            foreach (var entry in ConfigRegistry.GetRegisteredConfigEntries(tempRoot))
+            {
+                entriesByName[entry.Name] = entry;
+            }
+
+            entriesByName.Count.ShouldBe(3);
+            entriesByName["windows-x64"].AxisTags["os"].ShouldBe("windows");
+            entriesByName["linux-x64"].AxisTags["os"].ShouldBe("linux");
+            entriesByName["legacy"].AxisTags.ShouldBeEmpty();
+        }
+
+        [TestMethod]
+        public void ReRegisteringSameConfig_WithDifferentAxisTags_KeepsFirstWriterTags()
+        {
+            ConfigRegistry.EnsureConfigRegistered(tempRoot, "windows-x64", new Dictionary<string, string> { ["os"] = "windows" });
+            ConfigRegistry.EnsureConfigRegistered(tempRoot, "windows-x64", new Dictionary<string, string> { ["os"] = "should-not-win" });
+
+            var entries = ConfigRegistry.GetRegisteredConfigEntries(tempRoot);
+            entries.Count.ShouldBe(1);
+            entries[0].AxisTags["os"].ShouldBe("windows");
+        }
+
+        [TestMethod]
+        public void AxisTaggedConfig_Configs_txt_UsesTabAndSemicolonDelimitedFormat()
+        {
+            ConfigRegistry.EnsureConfigRegistered(tempRoot, "windows-x64", new Dictionary<string, string> { ["os"] = "windows", ["arch"] = "x64" });
+
+            var line = File.ReadAllLines(Path.Combine(tempRoot, ConfigRegistry.ConfigsFileName))[0];
+            line.ShouldStartWith("windows-x64\t");
+            line.ShouldContain("os=windows");
+            line.ShouldContain("arch=x64");
         }
     }
 }

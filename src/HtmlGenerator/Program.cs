@@ -84,7 +84,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             Directory.CreateDirectory(Paths.SolutionDestinationFolder);
             Directory.CreateDirectory(Paths.WebsiteDestinationFolder);
 
-            ConfigRegistry.EnsureConfigRegistered(runOutputRoot, options.Config);
+            ConfigRegistry.EnsureConfigRegistered(runOutputRoot, options.Config, options.ConfigAxes);
 
             Log.ErrorLogFilePath = Path.Combine(Paths.WebsiteDestinationFolder, Log.ErrorLogFile);
             Log.MessageLogFilePath = Path.Combine(Paths.WebsiteDestinationFolder, Log.MessageLogFile);
@@ -200,11 +200,13 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         {
             ConfigMergeCoordinator.RunGuarded(outRoot, () =>
             {
-                var configs = ConfigRegistry.GetRegisteredConfigs(outRoot);
-                if (configs.Count == 0)
+                var configEntries = ConfigRegistry.GetRegisteredConfigEntries(outRoot);
+                if (configEntries.Count == 0)
                 {
                     return;
                 }
+
+                var configs = configEntries.Select(e => e.Name).ToList();
 
                 Paths.WebsiteDestinationFolder = Path.Combine(outRoot, "index");
                 Directory.CreateDirectory(Paths.WebsiteDestinationFolder);
@@ -226,7 +228,12 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                     c => Path.Combine(outRoot, "obj", c),
                     StringComparer.Ordinal);
 
-                ConfigAwareProjectFinalizer.Finalize(configObjRoots, Paths.WebsiteDestinationFolder, emitAssemblyList, federation);
+                var axisTagsByConfig = configEntries.ToDictionary(
+                    e => e.Name,
+                    e => e.AxisTags,
+                    StringComparer.Ordinal);
+
+                ConfigAwareProjectFinalizer.Finalize(configObjRoots, Paths.WebsiteDestinationFolder, emitAssemblyList, federation, axisTagsByConfig);
                 WebsiteFinalizer.Finalize(outRoot, emitAssemblyList, federation);
             });
         }
@@ -238,6 +245,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 + "[/force] "
                 + "[/incremental] "
                 + "[/config:<name>] "
+                + "[/configAxes:<axis>=<value>;<axis>=<value>...] "
                 + "[/mergeConfigsOnly] "
                 + "[/useplugins] "
                 + "[/noplugins] "

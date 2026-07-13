@@ -920,26 +920,121 @@ a i {
 }
 
 /*
- * Config selector (#104). Empty and invisible on any site with fewer than 2
- * registered configs -- sbInitConfigSelector (scripts.js) never populates it
- * in that case, so this rule has no visible effect on the overwhelming
- * majority of real sites.
+ * Config selector (#104). Lives as its own persistent row in index.html itself
+ * (between the header and the nav/content panes), not inside header.html's
+ * frame -- see scripts.js's sbInitConfigSelector/sbRefreshConfigPanelVisibility
+ * for why (this placement is what lets it read/collapse based on the
+ * CURRENTLY-DISPLAYED content page's own data-configs, not just whether the
+ * site has 2+ configs registered overall). Hidden entirely (configSelectorPanelHidden)
+ * on any site with fewer than 2 registered configs, or on any individual page
+ * with nothing to select between -- the overwhelming majority of pages even on
+ * a config-aware site -- so this has no visible effect there.
  */
-#configSelectorContainer {
-    display: inline-block;
-    color: white;
+.configSelectorPanel {
+    flex: none;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 12px;
+    background-color: var(--color-page-background);
+    border-bottom: 1px solid var(--color-pane-border);
     font-size: 12px;
-    vertical-align: top;
-    margin-top: 22px;
-    margin-left: 10px;
+}
+
+.configSelectorPanelHidden {
+    display: none;
+}
+
+.configSelectorToggle {
+    flex: none;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--color-page-foreground);
+    cursor: pointer;
+    font-size: 12px;
+    line-height: 18px;
+}
+
+/* A plain CSS-triangle chevron -- no icon asset needed. Points down when
+   expanded ("click to collapse"), rotates to point right when collapsed
+   ("click to expand"). */
+.configSelectorToggle::before {
+    content: "";
+    display: inline-block;
+    width: 0;
+    height: 0;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid currentColor;
+    transition: transform 0.15s ease-in-out;
+}
+
+.configSelectorPanelCollapsed .configSelectorToggle::before {
+    transform: rotate(-90deg);
+}
+
+.configSelectorBody {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    min-width: 0;
+}
+
+.configAxisGroup {
+    display: inline-flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
 }
 
 .configSelectorLabel {
-    margin-right: 4px;
+    margin-right: 2px;
+    font-weight: 600;
+    color: var(--color-page-foreground);
+    opacity: 0.75;
 }
 
-.configSelectorCheckbox {
-    vertical-align: middle;
+/* Pill-style toggle for one axis value (e.g. "windows" within the "os"
+   axis). Active (selected/included) pills are filled; inactive ones are
+   outlined only, matching the approved option-a-refined-v2 mockup. */
+.configSelectorPill {
+    display: inline-block;
+    border: 1px solid var(--color-pane-border);
+    border-radius: 999px;
+    padding: 2px 10px;
+    margin: 0;
+    background: transparent;
+    color: var(--color-page-foreground);
+    font-size: 12px;
+    line-height: 16px;
+    cursor: pointer;
+}
+
+.configSelectorPillActive {
+    background-color: #68217A;
+    border-color: #68217A;
+    color: white;
+}
+
+/* Compact per-axis summary chip shown while the panel is collapsed, e.g.
+   "os: windows" or "arch: all" when that axis has no active restriction. */
+.configAxisSummaryPill {
+    display: inline-block;
+    border-radius: 999px;
+    padding: 2px 10px;
+    background-color: var(--color-pane-border);
+    color: var(--color-page-foreground);
+    font-size: 11px;
+    line-height: 16px;
+    opacity: 0.85;
 }
 
 /* Applied/removed at runtime by sbApplyConfigFilter (scripts.js) to elements
@@ -1415,6 +1510,14 @@ ol a, ol a:link, ol a:hover, ol a:focus, ol a:active,
         cursor: pointer;
         user-select: none;
         -webkit-user-select: none;
+    }
+
+    /* Fewer axis groups fit per row on narrow screens -- let each axis group
+       (and, within it, each pill) wrap onto its own line instead of clipping
+       or horizontally scrolling. */
+    .configSelectorPanel {
+        font-size: 11px;
+        padding: 6px 8px;
     }
 }
 

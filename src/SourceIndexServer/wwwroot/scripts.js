@@ -182,6 +182,8 @@ function onPageLoaded() {
 
     top.name = "topFrame";
 
+    sbInitConfigSelector();
+
     var query = document.location.search;
     if (query && query.slice(0, 3) == "?q=") {
         redirectLocation(top, "/#" + query.slice(1));
@@ -245,7 +247,6 @@ function onHeaderLoad() {
         }
     };
 
-    sbInitConfigSelector();
 }
 
 function onResultsLoad() {
@@ -312,6 +313,7 @@ function i(lineNumberCount) {
     }
 
     sbApplyConfigFilter(document);
+    top.sbRefreshConfigPanelVisibility();
 }
 
 function updateTopHashFromRightPane() {
@@ -369,6 +371,7 @@ function ix(lineNumberCount) {
     }
 
     sbApplyConfigFilter(document);
+    top.sbRefreshConfigPanelVisibility();
 }
 
 function rewriteExternalLinks() {
@@ -1875,6 +1878,64 @@ function sbParseConfigList(raw) {
     return result;
 }
 
+// Pure decision function for the multi-axis panel: given a per-axis selection
+// map (axisName -> array of selected values; a missing/empty array means "no
+// restriction on this axis"), the full configName -> {axisName: value} map
+// (configs.json's "configAxisValues"), and the full list of registered config
+// names, returns the flat list of config names that match EVERY axis
+// restriction (AND across axes; an axis with several selected values is an OR
+// within that axis -- standard faceted-filter semantics). A config with no
+// axis tags of its own (absent from configAxisValues, e.g. a mixed site with
+// some untagged configs) always matches -- it can't be excluded by an axis it
+// doesn't participate in. Kept dependency-free (no DOM access) so it can be
+// executed and asserted against outside a browser -- see
+// configSelectorFilter.tests.js.
+function sbDeriveSelectedConfigsFromAxisSelections(axisSelections, configAxisValues, allConfigNames) {
+    var result = [];
+    for (var i = 0; i < allConfigNames.length; i++) {
+        var configName = allConfigNames[i];
+        var tags = configAxisValues ? configAxisValues[configName] : null;
+        if (!tags) {
+            result.push(configName);
+            continue;
+        }
+
+        var matchesAllAxes = true;
+        for (var axisName in axisSelections) {
+            if (!Object.prototype.hasOwnProperty.call(axisSelections, axisName)) {
+                continue;
+            }
+
+            var selectedValues = axisSelections[axisName];
+            if (!selectedValues || selectedValues.length === 0) {
+                continue; // No restriction on this axis.
+            }
+
+            var tagValue = tags[axisName];
+            if (!tagValue || !sbContains(selectedValues, tagValue)) {
+                matchesAllAxes = false;
+                break;
+            }
+        }
+
+        if (matchesAllAxes) {
+            result.push(configName);
+        }
+    }
+
+    return result;
+}
+
+function sbContains(array, value) {
+    for (var i = 0; i < array.length; i++) {
+        if (array[i] === value) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 function sbGetSelectedConfigs() {
     try {
         var raw = window.sessionStorage.getItem(sbConfigSelectorStorageKey);
@@ -1936,10 +1997,14 @@ function sbReapplyConfigFilterToAllFrames() {
     } catch (e) { }
 }
 
-// Bootstraps the header's config-picker UI. No-ops entirely (renders nothing)
-// when configs.json is missing/empty -- i.e. every 0/1-config site, which is
+// Bootstraps the config panel -- now a persistent row in index.html itself
+// (between the header and nav/content panes), not something embedded inside
+// header.html's frame. No-ops entirely (renders nothing) when configs.json is
+// missing/has fewer than 2 configs -- i.e. every 0/1-config site, which is
 // the overwhelming majority of real usage -- so those sites see zero visual
 // or behavioral change from this feature existing.
+var sbConfigSelectorData = null; // { configs, axes, configAxisValues } from configs.json.
+
 function sbInitConfigSelector() {
     var container = document.getElementById("configSelectorContainer");
     if (!container) {
@@ -1953,19 +2018,21 @@ function sbInitConfigSelector() {
             return;
         }
 
-        var configs;
+        var data;
         try {
-            configs = JSON.parse(request.responseText);
+            data = JSON.parse(request.responseText);
         } catch (e) {
             return;
         }
 
-        if (!configs || configs.length < 2) {
+        if (!data || !data.configs || data.configs.length < 2) {
             // Fewer than 2 registered configs -- nothing to select between.
             return;
         }
 
-        sbRenderConfigSelectorUI(container, configs);
+        sbConfigSelectorData = data;
+        sbRenderConfigSelectorUI(container, data);
+        sbRefreshConfigPanelVisibility();
     };
     // A missing configs.json (single/no-config site) is the common case and
     // simply leaves the container empty -- no error handling needed beyond
@@ -1973,68 +2040,239 @@ function sbInitConfigSelector() {
     request.send();
 }
 
-function sbRenderConfigSelectorUI(container, configs) {
-    var selectedConfigs = sbGetSelectedConfigs();
+// Shows/hides the panel based on whether the CURRENTLY-DISPLAYED content page
+// has anything to select between at all. A site can have 2+ registered
+// configs overall yet still have plenty of pages that are entirely shared
+// (no [data-configs] anywhere on them) -- the panel would be noise there, so
+// it collapses out of existence rather than sitting around uselessly. Safe to
+// call from any frame's copy of this script (it only ever touches `top`'s own
+// document/state), and is re-run on every content-frame navigation via the
+// top.sbRefreshConfigPanelVisibility() calls wired into i()/ix().
+function sbRefreshConfigPanelVisibility() {
+    var container = document.getElementById("configSelectorContainer");
+    if (!container || !sbConfigSelectorData) {
+        return;
+    }
+
+    var hasConfigsOnCurrentPage = false;
+    try {
+        hasConfigsOnCurrentPage = !!(s && s.document && s.document.querySelector("[data-configs]"));
+    } catch (e) {
+        // Cross-frame access can throw before the frame has finished its
+        // initial navigation; treat as "nothing to show yet".
+    }
+
+    if (hasConfigsOnCurrentPage) {
+        container.classList.remove("configSelectorPanelHidden");
+    } else {
+        container.classList.add("configSelectorPanelHidden");
+    }
+}
+
+var sbConfigPanelCollapsedStorageKey = "sourceBrowserConfigPanelCollapsed";
+
+function sbIsConfigPanelCollapsed() {
+    try {
+        return window.sessionStorage.getItem(sbConfigPanelCollapsedStorageKey) === "1";
+    } catch (e) {
+        return false;
+    }
+}
+
+function sbSetConfigPanelCollapsed(collapsed) {
+    try {
+        window.sessionStorage.setItem(sbConfigPanelCollapsedStorageKey, collapsed ? "1" : "0");
+    } catch (e) {
+        // Best-effort persistence only; the panel still works for the
+        // lifetime of the current page even if this throws.
+    }
+}
+
+// Renders the full panel: an axis-grouped pill toggle per registered axis
+// value (e.g. an "os" row with "windows"/"linux" pills, an "arch" row with
+// "x64"/"arm64" pills) when expanded, or a compact chevron + per-axis summary
+// ("os: windows", "arch: all") when collapsed. Configs with no axis tags at
+// all (data.axes is empty, e.g. plain /config:<name> runs with no
+// /configAxes:) fall back to a single flat "Configs" group listing every
+// config name directly, matching the original flat-checkbox behavior.
+function sbRenderConfigSelectorUI(container, data) {
+    var collapsed = sbIsConfigPanelCollapsed();
     container.innerHTML = "";
+    container.className = "configSelectorPanel" + (collapsed ? " configSelectorPanelCollapsed" : "");
+
+    var toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "configSelectorToggle";
+    toggle.setAttribute("aria-label", collapsed ? "Expand config selector" : "Collapse config selector");
+    toggle.onclick = function () {
+        sbSetConfigPanelCollapsed(!sbIsConfigPanelCollapsed());
+        sbRenderConfigSelectorUI(container, data);
+    };
+    container.appendChild(toggle);
+
+    var body = document.createElement("span");
+    body.className = "configSelectorBody";
+    container.appendChild(body);
+
+    var axisNames = data.axes ? sbObjectKeys(data.axes) : [];
+    var hasAxes = axisNames.length > 0;
+
+    var selectedConfigs = sbGetSelectedConfigs();
+    var axisSelections = sbComputeAxisSelectionsFromFlatSelection(data, axisNames, selectedConfigs);
+
+    if (collapsed) {
+        if (hasAxes) {
+            for (var a = 0; a < axisNames.length; a++) {
+                body.appendChild(sbCreateConfigAxisSummaryPill(axisNames[a], data.axes[axisNames[a]], axisSelections[axisNames[a]]));
+            }
+        } else {
+            body.appendChild(sbCreateConfigAxisSummaryPill("Configs", data.configs, selectedConfigs));
+        }
+        return;
+    }
+
+    if (hasAxes) {
+        for (var i = 0; i < axisNames.length; i++) {
+            body.appendChild(sbCreateConfigAxisGroup(container, data, axisNames[i], data.axes[axisNames[i]], axisSelections));
+        }
+    } else {
+        body.appendChild(sbCreateConfigAxisGroup(container, data, "Configs", data.configs, { "Configs": selectedConfigs }));
+    }
+}
+
+function sbObjectKeys(obj) {
+    var keys = [];
+    for (var key in obj) {
+        if (Object.prototype.hasOwnProperty.call(obj, key)) {
+            keys.push(key);
+        }
+    }
+
+    return keys;
+}
+
+// Given the currently-persisted flat selected-config-name list, derives a
+// per-axis "which values are currently restricted" view purely for rendering
+// pill active-state -- the source of truth remains the flat selection in
+// sessionStorage (sbConfigSelectorStorageKey), matching every other page's
+// (and the sbApplyConfigFilter pipeline's) view of it.
+function sbComputeAxisSelectionsFromFlatSelection(data, axisNames, selectedConfigs) {
+    var axisSelections = {};
+    for (var a = 0; a < axisNames.length; a++) {
+        axisSelections[axisNames[a]] = [];
+    }
+
+    if (!selectedConfigs || selectedConfigs.length === 0) {
+        return axisSelections; // No restriction on any axis.
+    }
+
+    for (var a2 = 0; a2 < axisNames.length; a2++) {
+        var axisName = axisNames[a2];
+        var valuesSelectedOnThisAxis = [];
+        for (var c = 0; c < selectedConfigs.length; c++) {
+            var tags = data.configAxisValues ? data.configAxisValues[selectedConfigs[c]] : null;
+            var value = tags ? tags[axisName] : null;
+            if (value && !sbContains(valuesSelectedOnThisAxis, value)) {
+                valuesSelectedOnThisAxis.push(value);
+            }
+        }
+
+        // If every known value for this axis is represented, treat it as "no
+        // restriction" (matches how a fully-checked set collapses to []).
+        var allValues = data.axes[axisName];
+        var coversEveryValue = allValues && valuesSelectedOnThisAxis.length === allValues.length;
+        axisSelections[axisName] = coversEveryValue ? [] : valuesSelectedOnThisAxis;
+    }
+
+    return axisSelections;
+}
+
+function sbCreateConfigAxisSummaryPill(axisLabel, allValues, selectedValues) {
+    var pill = document.createElement("span");
+    pill.className = "configAxisSummaryPill";
+    var text = axisLabel + ": " + (selectedValues && selectedValues.length > 0 ? selectedValues.join(", ") : "all");
+    pill.appendChild(document.createTextNode(text));
+    return pill;
+}
+
+function sbCreateConfigAxisGroup(container, data, axisLabel, values, axisSelections) {
+    var group = document.createElement("span");
+    group.className = "configAxisGroup";
 
     var label = document.createElement("span");
     label.className = "configSelectorLabel";
-    label.appendChild(document.createTextNode("Configs:"));
-    container.appendChild(label);
+    label.appendChild(document.createTextNode(axisLabel + ":"));
+    group.appendChild(label);
 
-    for (var i = 0; i < configs.length; i++) {
-        (function (configName) {
-            var lowerConfigName = configName.toLowerCase();
-            var checkboxId = "configSelector_" + lowerConfigName;
+    var selectedValues = axisSelections[axisLabel] || [];
 
-            var checkbox = document.createElement("input");
-            checkbox.type = "checkbox";
-            checkbox.id = checkboxId;
-            checkbox.className = "configSelectorCheckbox";
-            checkbox.checked = selectedConfigs.length === 0 || sbContains(selectedConfigs, lowerConfigName);
-            checkbox.onchange = function () {
-                sbOnConfigSelectionChanged(configs, container);
+    for (var i = 0; i < values.length; i++) {
+        (function (value) {
+            var pill = document.createElement("button");
+            pill.type = "button";
+            var isActive = selectedValues.length === 0 || sbContains(selectedValues, value);
+            pill.className = "configSelectorPill" + (isActive ? " configSelectorPillActive" : "");
+            pill.appendChild(document.createTextNode(value));
+            pill.onclick = function () {
+                sbOnConfigAxisPillToggled(container, data, axisLabel, value);
             };
-
-            var checkboxLabel = document.createElement("label");
-            checkboxLabel.htmlFor = checkboxId;
-            checkboxLabel.appendChild(document.createTextNode(configName));
-
-            container.appendChild(checkbox);
-            container.appendChild(checkboxLabel);
-        })(configs[i]);
+            group.appendChild(pill);
+        })(values[i]);
     }
+
+    return group;
 }
 
-function sbContains(array, value) {
-    for (var i = 0; i < array.length; i++) {
-        if (array[i] === value) {
-            return true;
+// A pill click toggles ONE value within ONE axis group. Recomputes every
+// axis's selection from the (now-updated) pill DOM state, derives the flat
+// selected-config-names list via the pure sbDeriveSelectedConfigsFromAxisSelections,
+// persists it, and re-renders -- same flow as the original flat checkboxes,
+// just with an extra per-axis grouping step in front of the existing,
+// unchanged sbSetSelectedConfigs/sbApplyConfigFilter pipeline.
+function sbOnConfigAxisPillToggled(container, data, toggledAxisLabel, toggledValue) {
+    var axisNames = data.axes ? sbObjectKeys(data.axes) : [];
+    var hasAxes = axisNames.length > 0;
+    var selectedConfigs = sbGetSelectedConfigs();
+    var axisSelections = sbComputeAxisSelectionsFromFlatSelection(data, axisNames, selectedConfigs);
+
+    var currentValues = hasAxes ? (axisSelections[toggledAxisLabel] || []) : selectedConfigs;
+    var allValuesForAxis = hasAxes ? data.axes[toggledAxisLabel] : data.configs;
+
+    // An empty/no-restriction selection is treated as "everything selected"
+    // for toggle purposes, so the first click on any pill narrows down to
+    // just that value rather than appearing to add to a full set.
+    var effectiveCurrentValues = currentValues.length === 0 ? allValuesForAxis.slice() : currentValues.slice();
+    var index = -1;
+    for (var i = 0; i < effectiveCurrentValues.length; i++) {
+        if (effectiveCurrentValues[i] === toggledValue) {
+            index = i;
+            break;
         }
     }
 
-    return false;
-}
-
-// When every checkbox is checked (or the user has unchecked back down to
-// none), that's equivalent to "no selection" -- store an empty selection so
-// the filter's "no selection shows everything" rule applies, rather than
-// persisting a selection that happens to equal the full set.
-function sbOnConfigSelectionChanged(configs, container) {
-    var checkboxes = container.querySelectorAll(".configSelectorCheckbox");
-    var checkedConfigs = [];
-    var uncheckedCount = 0;
-    for (var i = 0; i < checkboxes.length; i++) {
-        if (checkboxes[i].checked) {
-            checkedConfigs.push(configs[i].toLowerCase());
-        } else {
-            uncheckedCount++;
-        }
+    if (index >= 0) {
+        effectiveCurrentValues.splice(index, 1);
+    } else {
+        effectiveCurrentValues.push(toggledValue);
     }
 
-    sbSetSelectedConfigs(uncheckedCount === 0 ? [] : checkedConfigs);
+    var newValues = effectiveCurrentValues.length === allValuesForAxis.length ? [] : effectiveCurrentValues;
+
+    var derivedSelectedConfigs;
+    if (hasAxes) {
+        axisSelections[toggledAxisLabel] = newValues;
+        derivedSelectedConfigs = sbDeriveSelectedConfigsFromAxisSelections(axisSelections, data.configAxisValues, data.configs);
+    } else {
+        derivedSelectedConfigs = newValues;
+    }
+
+    var isFullSelection = derivedSelectedConfigs.length === data.configs.length;
+    var toPersist = isFullSelection ? [] : derivedSelectedConfigs.map(function (c) { return c.toLowerCase(); });
+
+    sbSetSelectedConfigs(toPersist);
+    sbRenderConfigSelectorUI(container, data);
     sbReapplyConfigFilterToAllFrames();
-    sbTryAutoNavigateToVariant(uncheckedCount === 0 ? [] : checkedConfigs);
+    sbTryAutoNavigateToVariant(toPersist);
 }
 
 // When the selection narrows to EXACTLY one config, and the source frame is

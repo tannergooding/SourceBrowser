@@ -29,6 +29,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             bool showBranding,
             bool incremental,
             string config,
+            IReadOnlyDictionary<string, string> configAxes,
             bool mergeConfigsOnly)
         {
             SolutionDestinationFolder = solutionDestinationFolder;
@@ -51,6 +52,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             ShowBranding = showBranding;
             Incremental = incremental;
             Config = config;
+            ConfigAxes = configAxes ?? EmptyConfigAxes;
             MergeConfigsOnly = mergeConfigsOnly;
         }
 
@@ -105,6 +107,20 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         public string Config { get; }
 
         /// <summary>
+        /// /configAxes:&lt;axis&gt;=&lt;value&gt;;&lt;axis&gt;=&lt;value&gt;... -- optional structured tags for this
+        /// run's /config:&lt;name&gt; (e.g. /configAxes:os=windows;arch=x64 for a "windows-x64" config), so
+        /// the client selector can group configs by axis (OS, Arch, ...) instead of one flat, unstructured
+        /// checkbox per config name -- necessary once a real build matrix has more than a couple of
+        /// configs (e.g. os x arch). Only meaningful alongside /config:; ignored (and harmless) without
+        /// it. Empty (never null) when not given, which is the common/default case and leaves the
+        /// config registered exactly as before -- one flat, ungrouped name.
+        /// </summary>
+        public IReadOnlyDictionary<string, string> ConfigAxes { get; }
+
+        private static readonly IReadOnlyDictionary<string, string> EmptyConfigAxes =
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>
         /// /mergeConfigsOnly -- runs ONLY the cross-config merge step (declarations + references +
         /// file-render dedup) over whatever configs are already registered in this /out's Configs.txt,
         /// without loading MSBuild/running Pass1 at all. This is the standalone merge invocation a
@@ -138,6 +154,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             var showBranding = false;
             var incremental = false;
             var config = (string)null;
+            var configAxes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var mergeConfigsOnly = false;
 
             foreach (var arg in args)
@@ -242,6 +259,31 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 if (arg.StartsWith("/config:", StringComparison.OrdinalIgnoreCase))
                 {
                     config = arg.Substring("/config:".Length).StripQuotes();
+                    continue;
+                }
+
+                if (arg.StartsWith("/configAxes:", StringComparison.OrdinalIgnoreCase))
+                {
+                    // /configAxes:os=windows;arch=x64
+                    var axesField = arg.Substring("/configAxes:".Length).StripQuotes();
+                    foreach (var pair in axesField.Split(';'))
+                    {
+                        if (string.IsNullOrWhiteSpace(pair))
+                        {
+                            continue;
+                        }
+
+                        var equalsIndex = pair.IndexOf('=');
+                        if (equalsIndex <= 0)
+                        {
+                            Log.Write("Invalid /configAxes: entry (expected axis=value): " + pair, ConsoleColor.Red);
+                            continue;
+                        }
+
+                        var axisName = pair.Substring(0, equalsIndex).Trim();
+                        var axisValue = pair.Substring(equalsIndex + 1).Trim();
+                        configAxes[axisName] = axisValue;
+                    }
                     continue;
                 }
 
@@ -419,6 +461,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 showBranding,
                 incremental,
                 config,
+                configAxes,
                 mergeConfigsOnly);
         }
 

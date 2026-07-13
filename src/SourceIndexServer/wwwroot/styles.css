@@ -765,6 +765,10 @@ a i {
     display: inline-block;
 }
 
+#dotnetLogo.brandingHidden {
+    display: none;
+}
+
 #search-box {
     font-size: 16pt;
     width: 405px;
@@ -788,6 +792,56 @@ a i {
     width: 100%;*/
 }
 
+/* Embedded directly into the page's "note" strip (results.html's "N results found:" bar, or
+   SolutionExplorer.html's static "Solution Explorer" label) via embedRepoFilterInNote() in
+   scripts.js, so it reads as a filter on that content rather than a separate control elsewhere
+   on the page. Only applied once scripts.js actually moves a select in, so a plain .note (no
+   filter, or a single-repo/untagged site) is completely unaffected. */
+.note.hasFilter {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+/* The repo filter dropdown itself. Hidden by default; scripts.js only shows it once the site has
+   more than one distinct repo tag to offer. */
+#repo-filter {
+    font-size: 11pt;
+    border-color: lightgray;
+    border-width: 1px;
+    border-style: solid;
+    padding: 3px 20px 3px 6px;
+    max-width: 200px;
+    flex: none;
+    background-color: white;
+    /* Matches the note's own ~28px content-box height (13pt/125% line-height text plus 8px
+       top/bottom padding, minus the border this control adds) so it sits comfortably inline
+       with the result count text rather than visibly stretching the note. */
+    box-sizing: border-box;
+    height: 28px;
+    /* The browser's native dropdown arrow ignores padding-right -- it's drawn flush against the
+       border regardless -- so appearance:none replaces it with a plain SVG chevron we can
+       actually position with background-position, leaving the padding above to reserve text
+       space in front of it. */
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'><path d='M0 0 L5 6 L10 0 Z' fill='gray'/></svg>");
+    background-repeat: no-repeat;
+    background-position: right 6px center;
+    background-size: 10px 6px;
+}
+
+/* Hides a Solution Explorer project subtree that doesn't match the selected repo filter (see
+   filterSolutionExplorerByRepo in scripts.js). A class rather than inline display is used so this
+   doesn't fight with the folder expand/collapse logic, which also toggles display on the same
+   [data-assembly] elements. */
+.repoHidden {
+    display: none !important;
+}
+
 #logoText {
     background-image: url(content/icons/microsoftlogo.png);
     background-repeat: no-repeat;
@@ -805,6 +859,13 @@ a i {
     padding-right: 0px;
     vertical-align: top;
     display: inline-block;
+}
+
+/* Keep the "Source Browser" text/home-link itself when branding is off -- just drop the
+   Microsoft logo image and the left padding reserved for it. */
+#logoText.brandingHidden {
+    background-image: none;
+    padding-left: 0px;
 }
 
 #currentVersion {
@@ -1217,11 +1278,10 @@ ol a, ol a:link, ol a:hover, ol a:focus, ol a:active,
         display: none;
     }
 
-    /* At this width only the search box and pane toggle remain visible, so lay
-       them out as flex siblings and let the browser reserve exact space for
-       each. The toggle label ("Results"/"Code") varies in width, so the old
-       absolute toggle plus a fixed padding-right reservation overlapped the
-       search box in portrait; flex avoids the magic number entirely. */
+    /* The search box + pane toggle share this line -- lay them out as flex siblings and
+       let the browser reserve exact space for each. The toggle label ("Results"/"Code")
+       varies in width, so the old absolute toggle plus a fixed padding-right reservation
+       overlapped the search box in portrait; flex avoids the magic number entirely. */
     #searchBoxAndImages {
         display: flex;
         align-items: center;
@@ -1240,6 +1300,15 @@ ol a, ol a:link, ol a:hover, ol a:focus, ol a:active,
         width: 0;
         min-width: 0;
         margin: 10px 0;
+    }
+
+    /* Keep the control from stretching to its widest option's text on a narrow phone. */
+    #repo-filter {
+        max-width: 120px;
+        font-size: 9pt;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        overflow: hidden;
     }
 
     #paneToggle {
@@ -1407,7 +1476,8 @@ ol a, ol a:link, ol a:hover, ol a:focus, ol a:active,
         background: linear-gradient(to right, #789 0%,#012 80%,#000 100%);
     }
 
-    #search-box {
+    #search-box,
+    #repo-filter {
         background-color: black;
         border-color: #555;
     }

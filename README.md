@@ -45,7 +45,7 @@ At indexing time, C# and VB source code is analyzed using Roslyn and a lot of st
 
 The only component that runs on the webserver is a service that given a search query does the lookup and returns a list of matching types and members, which are hyperlinks into the static HTML. The webservice keeps a list of all declared types and members in memory, this list is also precalculated at indexing time. All services, such as Find All References, Project Explorer, etc. are all pre-rendered. 
 
-The generator is not incremental. You have to generate into an empty folder from scratch every time, and then replace the currently deployed folder with the new contents atomically (using e.g. Azure Deployments, robocopy /MIR to inetpub\\wwwroot, etc). For smaller projects, deploying to Azure using Dropbox or Git would work just fine.
+By default the generator is not incremental: you generate into an empty folder from scratch every time (`/force`), then replace the currently deployed folder with the new contents atomically (using e.g. Azure Deployments, robocopy /MIR to inetpub\\wwwroot, etc). For smaller projects, deploying to Azure using Dropbox or Git would work just fine. An opt-in `/incremental` mode, along with multi-config sites and repo tagging, is also available -- see [docs/IncrementalConfigAndRepos.md](docs/IncrementalConfigAndRepos.md).
 
 ### Limitations and known issues
  1. Indexing more than one project with the same assembly name is currently unsupported. Only the first project wins. This is due to a fundamental design decision to only reference an assembly by short name. Customizers should add a means to filter "victim" projects out in their forks to pick the best single project for inclusion in the index.

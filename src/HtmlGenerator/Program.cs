@@ -267,19 +267,87 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
         private static void StampOverviewHtmlWithDate(string destinationFolder)
         {
+            var indexFolder = Path.Combine(destinationFolder, "index");
             var source = Path.Combine(destinationFolder, "wwwroot", "overview.html");
-            var dst = Path.Combine(destinationFolder, "index", "overview.html");
+            var dst = Path.Combine(indexFolder, "overview.html");
             if (File.Exists(source))
             {
                 var text = File.ReadAllText(source);
-                text = StampOverviewHtmlText(text);
+                text = StampOverviewHtmlText(text, indexFolder);
                 File.WriteAllText(dst, text);
             }
         }
 
-        private static string StampOverviewHtmlText(string text)
+        private static string StampOverviewHtmlText(string text, string indexFolder)
         {
-            return text.Replace("$(Date)", DateTime.Today.ToString("MMMM d", CultureInfo.InvariantCulture));
+            // Assemblies.txt and Projects.txt are one line per indexed assembly/project and are written
+            // during project finalization, before this runs, so their line counts are the run totals.
+            // Assemblies with a project key of -1 are the synthetic loose-file containers (MSBuildFiles,
+            // TypeScriptFiles) that the search UI itself excludes, so they are left out of the count too.
+            var assemblyCount = CountAssemblies(Path.Combine(indexFolder, Constants.MasterAssemblyMap + ".txt"));
+            var projectCount = CountLines(Path.Combine(indexFolder, Constants.MasterProjectMap + ".txt"));
+
+            return text
+                .Replace("$(Date)", DateTime.Today.ToString("MMMM d", CultureInfo.InvariantCulture))
+                .Replace("$(IndexRunDate)", DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'", CultureInfo.InvariantCulture))
+                .Replace("$(SourceBrowserVersion)", GetSourceBrowserVersion())
+                .Replace("$(ProjectCount)", projectCount.ToString("N0", CultureInfo.InvariantCulture))
+                .Replace("$(AssemblyCount)", assemblyCount.ToString("N0", CultureInfo.InvariantCulture));
+        }
+
+        private static int CountAssemblies(string assembliesFilePath)
+        {
+            if (!File.Exists(assembliesFilePath))
+            {
+                return 0;
+            }
+
+            var count = 0;
+            foreach (var line in File.ReadLines(assembliesFilePath))
+            {
+                // Lines are name;projectKey;referencingCount. Skip the synthetic loose-file containers
+                // that carry a project key of -1.
+                var parts = line.Split(';');
+                if (parts.Length >= 2 && parts[1] != "-1")
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static int CountLines(string filePath)
+        {
+            if (!File.Exists(filePath))
+            {
+                return 0;
+            }
+
+            var count = 0;
+            foreach (var line in File.ReadLines(filePath))
+            {
+                if (!string.IsNullOrWhiteSpace(line))
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static string GetSourceBrowserVersion()
+        {
+            var assembly = typeof(WebsiteFinalizer).Assembly;
+            var informational = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            if (!string.IsNullOrEmpty(informational))
+            {
+                // Drop the +<commit sha> source-revision suffix that the SDK appends, for readability.
+                var plus = informational.IndexOf('+');
+                return plus >= 0 ? informational.Substring(0, plus) : informational;
+            }
+
+            return assembly.GetName().Version?.ToString() ?? "unknown";
         }
 
         private static void ToggleSolutionExplorerOff(string destinationFolder)

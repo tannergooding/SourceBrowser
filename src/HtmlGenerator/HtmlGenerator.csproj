@@ -54,6 +54,7 @@
     <PackageReference Include="System.Security.Cryptography.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\BinLogParser\BinLogParser.csproj" />
     <ProjectReference Include="..\Common\Common.csproj" />
     <ProjectReference Include="..\GitGlyph\GitGlyph.csproj" />
     <ProjectReference Include="..\MEF\MEF.csproj" />

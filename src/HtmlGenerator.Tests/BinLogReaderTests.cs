@@ -1,4 +1,4 @@
-using Microsoft.SourceBrowser.HtmlGenerator;
+using Microsoft.SourceBrowser.BinLogParser;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Shouldly;
 

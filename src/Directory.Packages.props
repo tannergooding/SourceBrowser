@@ -6,6 +6,7 @@
 
   <!-- Roslyn (version shared via NuGetVersionRoslyn in Directory.Build.props). -->
   <ItemGroup>
+    <PackageVersion Include="Microsoft.CodeAnalysis.Common" Version="$(NuGetVersionRoslyn)" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="$(NuGetVersionRoslyn)" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Features" Version="$(NuGetVersionRoslyn)" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="$(NuGetVersionRoslyn)" />

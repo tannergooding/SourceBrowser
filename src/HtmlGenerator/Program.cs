@@ -1,5 +1,6 @@
 ﻿using Microsoft.Build.Locator;
 using Microsoft.CodeAnalysis;
+using Microsoft.SourceBrowser.BinLogParser;
 using Microsoft.SourceBrowser.Common;
 using System;
 using System.Collections.Generic;

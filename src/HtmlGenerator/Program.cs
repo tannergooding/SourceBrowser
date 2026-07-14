@@ -9,6 +9,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -19,6 +20,16 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
     public class Program
     {
         private static async Task<int> Main(string[] args)
+        {
+            // Load the real MSBuild from the toolset so that all targets and SDKs can be found as
+            // if a real build is happening. Register here, before the JIT compiles RealMain (which
+            // pulls in MSBuild types), so the assembly resolver is installed in time.
+            MSBuildLocator.RegisterDefaults();
+            return await RealMain(args);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static async Task<int> RealMain(string[] args)
         {
             var options = CommandLineOptions.Parse(args);
 
@@ -46,10 +57,6 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
             AssertTraceListener.Register();
             AppDomain.CurrentDomain.FirstChanceException += FirstChanceExceptionHandler.HandleFirstChanceException;
-
-            // This loads the real MSBuild from the toolset so that all targets and SDKs can be found
-            // as if a real build is happening
-            MSBuildLocator.RegisterDefaults();
 
             if (Paths.SolutionDestinationFolder == null)
             {

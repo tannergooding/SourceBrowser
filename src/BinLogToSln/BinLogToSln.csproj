@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <PackAsTool>true</PackAsTool>
+    <RollForward>Major</RollForward>
+    <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
+    <VersionPrefix>1.0.1</VersionPrefix>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Basic.CompilerLog.Util" />
+    <PackageReference Include="LibGit2Sharp" />
+    <PackageReference Include="Mono.Options" />
+    <PackageReference Include="NuGet.Frameworks" />
+    <PackageReference Include="System.Reflection.Metadata" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BinLogParser\BinLogParser.csproj" />
+  </ItemGroup>
+
+</Project>

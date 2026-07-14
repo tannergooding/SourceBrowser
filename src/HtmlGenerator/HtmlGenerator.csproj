@@ -13,7 +13,7 @@
     <NoWarn>$(NoWarn);VSTHRD002;VSTHRD103</NoWarn>
   </PropertyGroup>
   <PropertyGroup>
-    <NuGetPackageId>SourceBrowser</NuGetPackageId>
+    <NuGetPackageId>TannerGooding.SourceBrowser</NuGetPackageId>
     <NuSpecFile>$(MSBuildProjectDirectory)\$(NuGetPackageId).nuspec</NuSpecFile>
   </PropertyGroup>
   <ItemGroup>

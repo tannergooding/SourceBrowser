@@ -6,6 +6,7 @@ using System.Threading;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.Classification;
 using Microsoft.SourceBrowser.Common;
+using System.Diagnostics;
 
 namespace Microsoft.SourceBrowser.HtmlGenerator
 {
@@ -516,7 +517,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             out string assemblyName)
         {
             string href = null;
-            assemblyName = SymbolIdService.GetAssemblyId(symbol.ContainingAssembly);
+            assemblyName = SymbolIdService.GetAssemblyId(GetAssemblyFromSymbol(symbol));
 
             // if it's in a different assembly, use the URL to a redirecting file for that assembly
             if (assemblyName != Document.Project.AssemblyName)
@@ -530,7 +531,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 {
                     referencedSymbolDestinationFilePath = Path.Combine(
                         SolutionDestinationFolder,
-                        SymbolIdService.GetAssemblyId(symbol.ContainingAssembly),
+                        assemblyName,
                         Constants.PartialResolvingFileName,
                         symbolId);
                 }
@@ -584,7 +585,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 globalNamespaceStyle: SymbolDisplayGlobalNamespaceStyle.Omitted,
                 typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces);
 
-        private static string GetAssemblyFromSymbol(ISymbol symbol)
+        private string GetAssemblyFromSymbol(ISymbol symbol)
         {
             ITypeSymbol type = (ITypeSymbol)GetTypeFromSymbol(symbol);
             string metadataName = type.MetadataName;
@@ -603,8 +604,28 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 symbol = forwardedTo;
             }
 
-            var assembly = SymbolIdService.GetAssemblyId(symbol.ContainingAssembly);
-            return assembly;
+            type = (ITypeSymbol)GetTypeFromSymbol(symbol);
+            string containingAssembly = type.ContainingAssembly.Name;
+            string typeDocId = (type?.OriginalDefinition ?? type).GetDocumentationCommentId();
+            var seenAssemblies = new HashSet<string>();
+            while (projectGenerator.SolutionGenerator.TypeForwards.TryGetValue((containingAssembly, typeDocId), out var newAssembly))
+            {
+                bool loop = !seenAssemblies.Add(newAssembly);
+                lock (projectGenerator.ForwardedReferenceAssemblies)
+                {
+                    projectGenerator.ForwardedReferenceAssemblies.Add(
+                        $"{containingAssembly}->{newAssembly}{(loop ? " (cycle)": "")}");
+                }
+
+                if (loop)
+                {
+                    break;
+                }
+
+                containingAssembly = newAssembly;
+            }
+
+            return containingAssembly;
         }
 
         private static ISymbol GetTypeFromSymbol(ISymbol symbol)

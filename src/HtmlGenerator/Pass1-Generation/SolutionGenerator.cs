@@ -17,6 +17,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 {
     public partial class SolutionGenerator : IDisposable
     {
+        public ImmutableDictionary<string, string> Properties { get; }
         public string SolutionSourceFolder { get; private set; }
         public string SolutionDestinationFolder { get; private set; }
         public string ProjectFilePath { get; private set; }
@@ -41,6 +42,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         public IEnumerable<string> PluginBlacklist { get; private set; }
         private readonly HashSet<string> typeScriptFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         public MEF.PluginAggregator PluginAggregator;
+        public IReadOnlyDictionary<ValueTuple<string, string>, string> TypeForwards { get; }
 
         /// <summary>
         /// List of all assembly names included in the index, from all solutions
@@ -57,6 +59,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             Federation federation,
             IReadOnlyDictionary<string, string> serverPathMappings,
             IEnumerable<string> pluginBlacklist,
+            IReadOnlyDictionary<ValueTuple<string, string>, string> typeForwards,
             bool includeSourceGeneratedDocuments)
         {
             this.SolutionSourceFolder = Path.GetDirectoryName(solutionFilePath);
@@ -65,6 +68,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             ServerPathMappings = serverPathMappings;
             this.Federation = federation ?? new Federation();
             this.PluginBlacklist = pluginBlacklist ?? Enumerable.Empty<string>();
+            this.Properties = properties;
+            this.TypeForwards = typeForwards ?? ImmutableDictionary<ValueTuple<string, string>, string>.Empty;
             this.IncludeSourceGeneratedDocuments = includeSourceGeneratedDocuments;
         }
 
@@ -76,6 +81,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             Federation federation = null,
             IReadOnlyDictionary<string, string> serverPathMappings = null,
             IEnumerable<string> pluginBlacklist = null,
+            IReadOnlyDictionary<ValueTuple<string, string>, string> typeForwards = null,
             bool doNotIncludeReferencedProjects = false,
             bool includeSourceGeneratedDocuments = true)
         {
@@ -86,6 +92,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 federation,
                 serverPathMappings,
                 pluginBlacklist,
+                typeForwards,
                 includeSourceGeneratedDocuments
             );
             solutionGenerator.solution = await solutionGenerator.CreateSolutionAsync(solutionFilePath, cancellationToken, properties, doNotIncludeReferencedProjects);
@@ -138,14 +145,17 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             string outputAssemblyPath,
             string solutionSourceFolder,
             string solutionDestinationFolder,
-            bool includeSourceGeneratedDocuments)
+            IReadOnlyDictionary<ValueTuple<string, string>, string> typeForwards = null,
+            bool includeSourceGeneratedDocuments = true)
         {
+            this.Properties = ImmutableDictionary<string, string>.Empty;
             this.ProjectFilePath = projectFilePath;
             string projectName = Path.GetFileNameWithoutExtension(projectFilePath);
             string language = projectFilePath.EndsWith(".vbproj", StringComparison.OrdinalIgnoreCase) ?
                 LanguageNames.VisualBasic : LanguageNames.CSharp;
             this.SolutionSourceFolder = solutionSourceFolder;
             this.SolutionDestinationFolder = solutionDestinationFolder;
+            this.TypeForwards = typeForwards ?? ImmutableDictionary<ValueTuple<string, string>, string>.Empty;
             this.IncludeSourceGeneratedDocuments = includeSourceGeneratedDocuments;
             string projectSourceFolder = Path.GetDirectoryName(projectFilePath);
             SetupPluginAggregator();
@@ -170,9 +180,10 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             }
         }
 
-        private static MSBuildWorkspace CreateWorkspace(ImmutableDictionary<string, string> propertiesOpt = null)
+        internal static MSBuildWorkspace CreateWorkspace(ImmutableDictionary<string, string> propertiesOpt = null)
         {
             propertiesOpt = propertiesOpt ?? ImmutableDictionary<string, string>.Empty;
+
             propertiesOpt = propertiesOpt.Add("AlwaysCompileMarkupFilesInSeparateDomain", "false");
 
             var w = MSBuildWorkspace.Create(properties: propertiesOpt);

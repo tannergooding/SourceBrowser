@@ -279,6 +279,40 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             return await AssemblyNameExtractor.GetAssemblyNamesAsync(filePath, cancellationToken);
         }
 
+        private static void GetTypeForwards(string path, IReadOnlyDictionary<string, string> properties, Dictionary<(string, string), string> typeForwards)
+        {
+            if (path.EndsWith(".binlog", StringComparison.Ordinal) ||
+                path.EndsWith(".buildlog", StringComparison.Ordinal))
+            {
+                var invocations = BinLogCompilerInvocationsReader.ExtractInvocations(path);
+                var processed = new HashSet<string>();
+                foreach (var invocation in invocations)
+                {
+                    if (!string.IsNullOrEmpty(invocation.OutputAssemblyPath) &&
+                        File.Exists(invocation.OutputAssemblyPath) &&
+                        processed.Add(invocation.OutputAssemblyPath))
+                    {
+                        var forwards = TypeForwardReader.ReadTypeForwardsFromAssembly(invocation.OutputAssemblyPath);
+                        foreach (var forward in forwards)
+                        {
+                            typeForwards[ValueTuple.Create(forward.Item1, forward.Item2)] = forward.Item3;
+                        }
+                    }
+                }
+
+                return;
+            }
+
+            {
+                var obj = new TypeForwardReader();
+                var forwards = obj.GetTypeForwards(path, properties);
+                foreach (var forward in forwards)
+                {
+                    typeForwards[ValueTuple.Create(forward.Item1, forward.Item2)] = forward.Item3;
+                }
+            }
+        }
+
         private static async Task IndexSolutionsAsync(
             IEnumerable<string> solutionFilePaths,
             IReadOnlyDictionary<string, string> properties,
@@ -305,6 +339,23 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             }
 
             var processedAssemblyList = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            var typeForwards = new Dictionary<ValueTuple<string, string>, string>();
+
+            foreach (var path in solutionFilePaths)
+            {
+                if (
+                    path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ||
+                    path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+                    )
+                {
+                    continue;
+                }
+                using (Disposable.Timing($"Reading type forwards from {path}"))
+                {
+                    GetTypeForwards(path, properties, typeForwards);
+                }
+            }
 
             // Solution tag is auto-derived from each top-level input's file name when it's a
             // .sln/.slnx; standalone project/binlog inputs aren't part of a solution, so they
@@ -366,6 +417,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                                 processedAssemblyList,
                                 assemblyNames,
                                 solutionFolder,
+                                typeForwards,
                                 includeSourceGeneratedDocuments: includeSourceGeneratedDocuments,
                                 repoName: repoName,
                                 solutionName: solutionName);
@@ -390,7 +442,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                             serverPathMappings: serverPathMappings,
                             pluginBlacklist: pluginBlacklist,
                             doNotIncludeReferencedProjects: doNotIncludeReferencedProjects,
-                            includeSourceGeneratedDocuments: includeSourceGeneratedDocuments);
+                            includeSourceGeneratedDocuments: includeSourceGeneratedDocuments,
+                            typeForwards: typeForwards);
                     }
 
                     using (solutionGenerator)

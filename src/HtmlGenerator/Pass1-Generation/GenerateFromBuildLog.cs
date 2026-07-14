@@ -23,6 +23,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             HashSet<string> processedAssemblyList = null,
             HashSet<string> assemblyNames = null,
             Folder<ProjectSkeleton> solutionExplorerRoot = null,
+            Dictionary<(string, string), string> typeForwards = null,
             bool includeSourceGeneratedDocuments = true,
             string repoName = "",
             string solutionName = "")
@@ -44,6 +45,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                         invocation.OutputAssemblyPath,
                         invocation.SolutionRoot,
                         Paths.SolutionDestinationFolder,
+                        typeForwards,
                         includeSourceGeneratedDocuments);
                     solutionGenerator.ServerPathMappings = serverPathMappings;
                     solutionGenerator.GlobalAssemblyList = assemblyNames;
@@ -57,7 +59,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                     var solutionGenerator = await SolutionGenerator.CreateAsync(
                         invocation.OutputAssemblyPath,
                         Paths.SolutionDestinationFolder,
-                        cancellationToken);
+                        cancellationToken,
+                        typeForwards: typeForwards);
                     solutionGenerator.RepoName = repoName ?? string.Empty;
                     solutionGenerator.SolutionName = solutionName ?? string.Empty;
                     await solutionGenerator.GenerateAsync(cancellationToken);

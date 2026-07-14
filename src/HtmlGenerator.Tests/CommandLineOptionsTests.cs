@@ -61,6 +61,15 @@ namespace HtmlGenerator.Tests
         }
 
         [TestMethod]
+        public void Server_path_disallows_characters_outside_quotes()
+        {
+            CommandLineOptions.Parse("/serverPath:c\"a\"=\"b\"").ServerPathMappings.ShouldBeEmpty();
+            CommandLineOptions.Parse("/serverPath:\"a\"c=\"b\"").ServerPathMappings.ShouldBeEmpty();
+            CommandLineOptions.Parse("/serverPath:\"a\"=c\"b\"").ServerPathMappings.ShouldBeEmpty();
+            CommandLineOptions.Parse("/serverPath:\"a\"=\"b\"c").ServerPathMappings.ShouldBeEmpty();
+        }
+
+        [TestMethod]
         public void No_warnings_switch_is_recognized()
         {
             CommandLineOptions.Parse("/noWarnings").SuppressWarnings.ShouldBeTrue();

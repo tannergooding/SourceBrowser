@@ -4,33 +4,34 @@ using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
+using Microsoft.SourceBrowser.SourceIndexServer.Models;
 
 namespace Microsoft.SourceBrowser.SourceIndexServer
 {
     public class Serialization
     {
-        public static IEnumerable<AssemblyInfo> ReadAssemblies(string rootPath)
+        public static IEnumerable<AssemblyInfo> ReadAssemblies(IFileSystem fs)
         {
-            var assemblyInfoFile = Path.Combine(rootPath, Constants.MasterAssemblyMap + ".txt");
-            if (!File.Exists(assemblyInfoFile))
+            var assemblyInfoFile = Constants.MasterAssemblyMap + ".txt";
+            if (!fs.FileExists(assemblyInfoFile))
             {
                 return Array.Empty<AssemblyInfo>();
             }
 
-            var result = File.ReadLines(assemblyInfoFile)
+            var result = fs.ReadLines(assemblyInfoFile)
                 .Select(l => new AssemblyInfo(l));
             return result;
         }
 
-        public static IEnumerable<string> ReadProjects(string folderPath)
+        public static IEnumerable<string> ReadProjects(IFileSystem fs)
         {
-            var projectInfoFile = Path.Combine(folderPath, Constants.MasterProjectMap + ".txt");
-            if (!File.Exists(projectInfoFile))
+            var projectInfoFile = Constants.MasterProjectMap + ".txt";
+            if (!fs.FileExists(projectInfoFile))
             {
                 return Array.Empty<string>();
             }
 
-            var result = File.ReadLines(projectInfoFile);
+            var result = fs.ReadLines(projectInfoFile);
             return result;
         }
 

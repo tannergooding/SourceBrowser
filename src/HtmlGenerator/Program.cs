@@ -5,6 +5,7 @@ using Microsoft.SourceBrowser.Common;
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -19,8 +20,19 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 {
     public class Program
     {
+        private static readonly bool VerboseAssemblyDiagnostics =
+            Environment.GetEnvironmentVariable("SOURCEBROWSER_ASSEMBLY_DIAGNOSTICS") == "1";
+
         private static async Task<int> Main(string[] args)
         {
+            if (VerboseAssemblyDiagnostics)
+            {
+                AppDomain.CurrentDomain.AssemblyLoad += (s, e) =>
+                {
+                    Console.WriteLine($"Assembly Load: {e.LoadedAssembly.GetName().Name} from {e.LoadedAssembly.Location}");
+                };
+            }
+
             // Load the real MSBuild from the toolset so that all targets and SDKs can be found as
             // if a real build is happening. Register here, before the JIT compiles RealMain (which
             // pulls in MSBuild types), so the assembly resolver is installed in time.
@@ -47,6 +59,19 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 PrintUsage();
                 Log.Close();
                 return 1;
+            }
+
+            if (VerboseAssemblyDiagnostics)
+            {
+                var msbuildAssembly = typeof(Project).Assembly;
+                var version = FileVersionInfo.GetVersionInfo(msbuildAssembly.Location);
+                Console.WriteLine($"Using msbuild version {version.FileVersion} from {msbuildAssembly.Location}");
+                Console.WriteLine();
+                var msbuildDir = Path.GetDirectoryName(msbuildAssembly.Location);
+                foreach (var dll in Directory.EnumerateFiles(msbuildDir, "*.dll"))
+                {
+                    Console.WriteLine($"MSBuild Assembly: {Path.GetFileName(dll)}");
+                }
             }
 
             Paths.SolutionDestinationFolder = options.SolutionDestinationFolder;

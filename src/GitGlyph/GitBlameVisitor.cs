@@ -93,13 +93,13 @@ namespace GitGlyph
                     }
                     else
                     {
-                        result = new BlameHunk[0];
+                        result = Array.Empty<BlameHunk>();
                     }
                 }
                 catch (Exception ex)
                 {
                     Logger.Info("Couldn't blame " + path, ex);
-                    result = new BlameHunk[0];
+                    result = Array.Empty<BlameHunk>();
                 }
                 getBlameResultCache.Add(path, result);
             }

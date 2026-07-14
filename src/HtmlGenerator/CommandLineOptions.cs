@@ -393,7 +393,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                     excludeTests = true;
                     continue;
                 }
-                
+
                 if (arg == "/excludeSourceGeneratedDocuments")
                 {
                     includeSourceGeneratedDocuments = false;

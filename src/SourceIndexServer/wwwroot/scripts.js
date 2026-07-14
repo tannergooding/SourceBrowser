@@ -1582,7 +1582,7 @@ function expandCollapseFolder(capturedFolder, capturedPlusMinus, capturedFolderI
                 capturedFolder.initialize(capturedFolder);
                 capturedFolder.initialize = null;
             }
-            
+
             if (!capturedFolder.everExpanded) {
                 for (var i = 0; i < capturedFolder.children.length; i++) {
                     if (capturedFolder.children[i].className === 'folder') {

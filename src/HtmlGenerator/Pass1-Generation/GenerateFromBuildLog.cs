@@ -5,7 +5,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.SourceBrowser.Common;
-
 using CompilerInvocation = Microsoft.SourceBrowser.BinLogParser.CompilerInvocation;
 
 namespace Microsoft.SourceBrowser.HtmlGenerator

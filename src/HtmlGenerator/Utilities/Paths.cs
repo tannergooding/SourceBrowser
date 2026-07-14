@@ -253,7 +253,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                     folders = ["Generated", ..parts.Skip(parts.Length - 3).Take(2)];
                 }
             }
-            
+
             string result = Path.Combine(folders
                 .Select(SanitizeFolder)
                 .ToArray());

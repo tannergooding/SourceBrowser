@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using Microsoft.SourceBrowser.BinLogParser;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 

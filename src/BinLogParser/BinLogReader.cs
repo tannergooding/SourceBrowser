@@ -1,4 +1,4 @@
-﻿using Microsoft.Build.Logging.StructuredLogger;
+using Microsoft.Build.Logging.StructuredLogger;
 using Microsoft.CodeAnalysis;
 using System;
 using System.Collections.Concurrent;

@@ -2,14 +2,15 @@
 
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- msbuild-->
-    <PackageVersion Include="Microsoft.Build.Framework" Version="18.7.1" />
-    <PackageVersion Include="Microsoft.Build.Tasks.Core" Version="18.7.1" />
-    <PackageVersion Include="Microsoft.Build.Utilities.Core" Version="18.7.1" />
-    <PackageVersion Include="Microsoft.Build" Version="18.7.1" />
+    <PackageVersion Include="Microsoft.Build.Framework" Version="18.8.2" />
+    <PackageVersion Include="Microsoft.Build.Tasks.Core" Version="18.8.2" />
+    <PackageVersion Include="Microsoft.Build.Utilities.Core" Version="18.8.2" />
+    <PackageVersion Include="Microsoft.Build" Version="18.8.2" />
 
     <!-- roslyn -->
     <PackageVersion Include="Microsoft.CodeAnalysis" Version="5.6.0" />
@@ -27,9 +28,9 @@
     <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="5.6.0" />
 
     <!-- test dependencies -->
-    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.7.0" />
-    <PackageVersion Include="MSTest.TestAdapter" Version="4.3.0" />
-    <PackageVersion Include="MSTest.TestFramework" Version="4.3.0" />
+    <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
+    <PackageVersion Include="MSTest.TestAdapter" Version="4.3.2" />
+    <PackageVersion Include="MSTest.TestFramework" Version="4.3.2" />
     <PackageVersion Include="Shouldly" Version="4.3.0" />
 
     <!-- other dependencies -->
@@ -38,26 +39,28 @@
     <PackageVersion Include="MSBuild.StructuredLogger" Version="2.3.213" />
 
     <PackageVersion Include="Microsoft.Build.Locator" Version="1.11.2" />
-    <PackageVersion Include="Microsoft.NET.StringTools" Version="18.7.1" />
+    <PackageVersion Include="Microsoft.NET.StringTools" Version="18.8.2" />
     <PackageVersion Include="Microsoft.VisualStudio.SolutionPersistence" Version="1.0.52" />
-    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.300" />
+    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="10.0.301" />
 
     <PackageVersion Include="GuiLabs.Language.Xml" Version="1.2.119" />
 
-    <PackageVersion Include="Microsoft.Bcl.AsyncInterfaces" Version="10.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.9" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.AzureAppServices" Version="10.0.9" />
-    <PackageVersion Include="System.Configuration.ConfigurationManager" Version="10.0.9" />
-    <PackageVersion Include="System.Security.Cryptography.Xml" Version="10.0.9" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.10" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.AzureAppServices" Version="10.0.10" />
+    <PackageVersion Include="System.Collections.Immutable" Version="10.0.10" />
+    <PackageVersion Include="System.Text.Json" Version="10.0.10" />
+    <PackageVersion Include="System.Configuration.ConfigurationManager" Version="10.0.10" />
+    <PackageVersion Include="System.Security.Cryptography.Xml" Version="10.0.10" />
   </ItemGroup>
-
+  
   <!-- dependencies for dotnet/source-browser projects -->
   <ItemGroup>
       <PackageVersion Include="Azure.Identity" Version="1.21.0" />
       <PackageVersion Include="Azure.Storage.Blobs" Version="12.29.1" />
       <PackageVersion Include="Mono.Options" Version="6.12.0.148" />
       <PackageVersion Include="NuGet.Frameworks" Version="7.6.0" />
-      <PackageVersion Include="System.Reflection.Metadata" Version="10.0.9" />
+      <PackageVersion Include="SharpZipLib" Version="1.4.2" />
+      <PackageVersion Include="System.Reflection.Metadata" Version="10.0.10" />
   </ItemGroup>
 
 </Project>

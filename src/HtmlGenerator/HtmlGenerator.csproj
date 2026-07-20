@@ -49,9 +49,6 @@
     <PackageReference Include="GuiLabs.Language.Xml" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" PrivateAssets="All" />
     <PackageReference Include="System.Configuration.ConfigurationManager" />
-    <!-- Transitive security pin; remove once the referencing package ships a patched version.
-         System.Security.Cryptography.Xml: Microsoft.Build.Tasks.Core 18.7.1 still pulls the vulnerable 10.0.4. -->
-    <PackageReference Include="System.Security.Cryptography.Xml" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\BinLogParser\BinLogParser.csproj" />

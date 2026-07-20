@@ -291,7 +291,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 + "[/repoPath:\"local repo folder\"=\"repo display name\"] "
                 + "[/repo:\"local repo folder\"=\"repo display name\"=\"root URL\"] "
                 + "[/assemblylist]"
-                + "[/excludetests]" 
+                + "[/excludetests]"
                 + "[/excludeSourceGeneratedDocuments]"
                 + "[/noWarnings]" +
                 "" +
@@ -446,6 +446,19 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                         var invocations = BinLogCompilerInvocationsReader.ExtractInvocations(path);
                         foreach (var invocation in invocations)
                         {
+                            string projectFolder = Path.GetFileName(invocation.ProjectDirectory);
+                            if (projectFolder == "ref" || projectFolder == "stubs")
+                            {
+                                Log.Write($"Skipping Ref Assembly project {invocation.ProjectFilePath}");
+                                continue;
+                            }
+
+                            if (Path.GetFileName(Path.GetDirectoryName(invocation.ProjectDirectory)) == "cycle-breakers")
+                            {
+                                Log.Write($"Skipping Wpf Cycle-Breaker project {invocation.ProjectFilePath}");
+                                continue;
+                            }
+                            Log.Write($"Indexing Project: {invocation.ProjectFilePath}");
                             await GenerateFromBuildLog.GenerateInvocationAsync(
                                 invocation,
                                 cancellationToken,

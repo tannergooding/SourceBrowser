@@ -54,12 +54,6 @@ namespace Microsoft.SourceBrowser.Common
             {
                 OnNext(message);
             }
-
-            OnCompleted();
-        }
-
-        private static void OnCompleted()
-        {
         }
 
         private static void Enqueue(IMessage message)

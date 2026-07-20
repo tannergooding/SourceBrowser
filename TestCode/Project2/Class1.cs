@@ -20,7 +20,7 @@ public static class Extensions
             get => 42;
             set => _ = value;
         }
-        
+
         public void ExtensionBlockMethod()
             => Console.WriteLine(s.Length);
     }
@@ -30,7 +30,7 @@ public static class Extensions
         public static string NewLineExtension => "\r\n";
         public static void ExtensionBlockClassMethod() { }
     }
-    
+
     extension<T1, T2>(IReadOnlyDictionary<T1, T2> dict)
     {
         public void GenericExtension<T3, T4>(T1 a, T2 b, T3 c, T4 d) { }
@@ -63,29 +63,29 @@ public class ExtensionUsage
     {
         "".ExtensionMethod();
         Extensions.ExtensionMethod("");
-        
+
         "".ExtensionBlockMethod();
         Extensions.ExtensionBlockMethod("");
-        
+
         _ = "".ExtensionProperty;
         _ = Extensions.get_ExtensionProperty("");
-        
+
         _ = "".ExtensionPropertyWithGetSet;
         _ = Extensions.get_ExtensionPropertyWithGetSet("");
         Extensions.set_ExtensionPropertyWithGetSet("", 42);
-        
+
         _ = string.NewLineExtension;
         _ = Extensions.get_NewLineExtension();
-        
+
         string.ExtensionBlockClassMethod();
         Extensions.ExtensionBlockClassMethod();
-        
+
         new Dictionary<int, string>().GenericExtension(1, "two", 3.0f, 4.0);
         Extensions.GenericExtension(new Dictionary<int, decimal>(), 42, 42m, 42f, 42.0);
-        
+
         _ = new Dictionary<int, string>() * new Dictionary<string, int>();
         Extensions.op_Multiply(new Dictionary<int, string>(), new Dictionary<string, int>());
-        
+
         var dict = new Dictionary<int, string>();
         dict *= "foo";
         Extensions.op_MultiplicationAssignment(dict, "bar");

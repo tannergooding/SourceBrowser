@@ -284,7 +284,7 @@ namespace Microsoft.SourceBrowser.SourceIndexServer.Models
 
             var assemblyInfo = AssemblyResolver(assemblyName);
 
-            if (this.Repos.Any() && !this.Repos.Any(r => string.Equals(r, assemblyInfo.RepoName, StringComparison.OrdinalIgnoreCase)))
+            if (this.Repos.Any() && !RepoMatches(assemblyInfo))
             {
                 return false;
             }
@@ -295,6 +295,20 @@ namespace Microsoft.SourceBrowser.SourceIndexServer.Models
             }
 
             return true;
+        }
+
+        // A selected repo matches an assembly when it's the assembly's own repo OR any of its ancestors
+        // (its RepoChain) -- so filtering by a parent repo (e.g. dotnet/vmr) includes its nested
+        // sub-repos, while filtering by a leaf repo stays scoped to just that repo.
+        private bool RepoMatches(AssemblyInfo assemblyInfo)
+        {
+            var chain = assemblyInfo.RepoChain;
+            if (chain == null || chain.Length == 0)
+            {
+                return this.Repos.Any(r => string.Equals(r, assemblyInfo.RepoName, StringComparison.OrdinalIgnoreCase));
+            }
+
+            return this.Repos.Any(r => chain.Any(c => string.Equals(r, c, StringComparison.OrdinalIgnoreCase)));
         }
 
         /// <summary>
@@ -309,7 +323,7 @@ namespace Microsoft.SourceBrowser.SourceIndexServer.Models
                 return true;
             }
 
-            if (this.Repos.Any() && !this.Repos.Any(r => string.Equals(r, assemblyInfo.RepoName, StringComparison.OrdinalIgnoreCase)))
+            if (this.Repos.Any() && !RepoMatches(assemblyInfo))
             {
                 return false;
             }

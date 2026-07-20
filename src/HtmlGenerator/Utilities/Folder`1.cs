@@ -24,6 +24,11 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         /// plain physical-folder nodes.</summary>
         public string RepoName { get; set; }
 
+        /// <summary>Full repo ancestry (outermost first, this folder's own repo last) for Repo grouping
+        /// nodes, so the client-side filter can scope by ancestor-or-self (a parent repo includes its
+        /// nested sub-repos). Unset for plain physical-folder nodes.</summary>
+        public IReadOnlyList<string> RepoChain { get; set; }
+
         public SortedList<string, Folder<T>> Folders { get; set; }
         public List<T> Items { get; set; }
 

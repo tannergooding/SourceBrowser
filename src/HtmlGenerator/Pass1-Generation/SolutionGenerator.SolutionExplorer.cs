@@ -51,6 +51,18 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         {
             var folderList = folders?.ToArray() ?? Array.Empty<string>();
 
+            // Repo/Solution grouping is per project: a single input can span several repos (e.g. a VMR
+            // whose sub-repos are tagged via nested /repoPath), so descend this project's full repo
+            // ancestry (parent repo -> sub-repo) before laying down the .sln folder chain underneath it.
+            var repoChain = ResolveRepoChain(project.FilePath);
+            var repoName = repoChain.Count > 0 ? repoChain[repoChain.Count - 1] : string.Empty;
+            folder = Program.GetSolutionExplorerGroupingFolder(folder, repoChain, SolutionName, DistinctRepoCount, SolutionCountsByRepo);
+
+            AddProjectToFolderCore(folder, project, folderList, repoName, repoChain);
+        }
+
+        private void AddProjectToFolderCore(Folder folder, Project project, string[] folderList, string repoName, IReadOnlyList<string> repoChain)
+        {
             // Additive persistence only -- see Constants.SolutionFolderFileName. Written regardless of
             // whether the project ends up nested or at the root (empty file = root), and is best-effort:
             // a project this Pass1 run didn't actually generate output for (e.g. it was filtered out
@@ -64,12 +76,12 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
             if (folderList.Length == 0)
             {
-                folder.Add(new ProjectSkeleton(project.AssemblyName, project.Name, RepoName));
+                folder.Add(new ProjectSkeleton(project.AssemblyName, project.Name, repoName, repoChain));
             }
             else
             {
                 var subfolder = folder.GetOrCreateFolder(folderList[0]);
-                AddProjectToFolder(subfolder, project, folderList.Skip(1));
+                AddProjectToFolderCore(subfolder, project, folderList.Skip(1).ToArray(), repoName, repoChain);
             }
         }
 

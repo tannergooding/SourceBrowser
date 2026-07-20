@@ -230,7 +230,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             string outputPath,
             IEnumerable<Tuple<string, string>> listOfAssemblyNamesAndProjects,
             IDictionary<string, int> referencingAssembliesCount,
-            IDictionary<string, Tuple<string, string>> repoAndSolutionNamesByAssembly = null)
+            IDictionary<string, Tuple<string, string>> repoAndSolutionNamesByAssembly = null,
+            IDictionary<string, string> repoChainByAssembly = null)
         {
             IEnumerable<Tuple<string, int>> assemblies;
             IEnumerable<string> projects;
@@ -241,7 +242,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
             using (Measure.Time("Writing project map"))
             {
-                // Only emit the extra ;repo;solution fields when at least one assembly in the site
+                // Only emit the extra ;repo;solution;chain fields when at least one assembly in the site
                 // actually carries a non-empty tag, so an untagged/single-repo site's Assemblies.txt
                 // stays byte-identical to the format written before repo/solution tagging existed.
                 bool anyTagged = repoAndSolutionNamesByAssembly != null &&
@@ -266,7 +267,16 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                                 solutionName = tags.Item2 ?? "";
                             }
 
-                            line = line + ";" + repoName + ";" + solutionName;
+                            // Repo ancestry ('|'-joined), so the server can scope a parent repo to include
+                            // its nested sub-repos. Defaults to the leaf repo when no chain was persisted.
+                            string repoChain = "";
+                            repoChainByAssembly?.TryGetValue(t.Item1, out repoChain);
+                            if (string.IsNullOrEmpty(repoChain))
+                            {
+                                repoChain = repoName;
+                            }
+
+                            line = line + ";" + repoName + ";" + solutionName + ";" + repoChain;
                         }
 
                         return line;

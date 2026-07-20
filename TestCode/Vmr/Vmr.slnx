@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="VmrCore/VmrCore.csproj" />
+  <Project Path="src/SubRepoX/SubRepoX.csproj" />
+  <Project Path="src/SubRepoY/SubRepoY.csproj" />
+</Solution>

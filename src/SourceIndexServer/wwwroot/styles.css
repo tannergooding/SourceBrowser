@@ -9,6 +9,7 @@
     --color-page-background: white;
     --color-page-foreground: black;
     --color-pane-border: #aaa;
+    --color-repo-tint: #eef4fb;
 
     /* Selection / focus highlight; identical in light and dark, so it is not
        overridden in the dark block below. */
@@ -443,7 +444,7 @@ a i {
    boundaries are visually obvious at a glance, distinct from plain physical folders. */
 .repoTitle {
     font-weight: bold;
-    background-color: #eef4fb;
+    background-color: var(--color-repo-tint);
     border-left: 3px solid #4a90d9;
     padding-left: 4px;
     margin-left: -4px;
@@ -962,23 +963,25 @@ body.solutionExplorerBody #rootFolder {
 
 /* Repo (and, on multi-solution sites, solution) grouping headers stay visible while the tree is
    scrolled. Sticky top floats the header down as its subtree scrolls past so the current repo stays
-   labeled; sticky left plus a full-pane min-width keeps the tint spanning the view even after a long
-   path has scrolled the tree sideways -- otherwise the band would end at the pane's original right
-   edge. The opaque background (repoTitle already tints; solutionTitle gets one) stops scrolled rows
-   from showing through the pinned header. */
+   labeled. The band must read full-width at every nesting depth like the outermost repo, so
+   normalizeGroupingBands (scripts.js) pulls each header's box to the pane's left edge and restores the
+   depth indent as padding (leaving just the text/arrow offset); min-width:100vw then spans the header
+   across the pane -- sticky left:0 keeps it there when a long path scrolls the tree sideways. The
+   opaque background (repoTitle already tints; solutionTitle gets one) stops scrolled rows from showing
+   through the pinned header. */
 body.solutionExplorerBody .repoTitle,
 body.solutionExplorerBody .solutionTitle {
     position: sticky;
     top: 0;
     left: 0;
     z-index: 1;
-    min-width: 100%;
+    min-width: 100vw;
     width: max-content;
     box-sizing: border-box;
 }
 
 body.solutionExplorerBody .solutionTitle {
-    background-color: #ffffff;
+    background-color: var(--color-page-background);
 }
 /* Hides a Solution Explorer project subtree that doesn't match the selected repo filter (see
    filterSolutionExplorerByRepo in scripts.js). A class rather than inline display is used so this
@@ -1659,6 +1662,7 @@ ol a, ol a:link, ol a:hover, ol a:focus, ol a:active,
        up automatically through the custom properties declared in :root. */
     :root {
         --color-page-background: black;
+        --color-repo-tint: #1c2b3d;
         --color-page-foreground: #aaa;
         --color-pane-border: #333;
     }
@@ -1724,7 +1728,6 @@ ol a, ol a:link, ol a:hover, ol a:focus, ol a:active,
     }
 
     .repoTitle {
-        background-color: #1c2b3d;
         border-left-color: #4a90d9;
     }
 

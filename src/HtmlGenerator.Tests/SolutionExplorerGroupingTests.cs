@@ -78,5 +78,90 @@ namespace HtmlGenerator.Tests
             first.ShouldBeSameAs(second);
             root.Folders.Count.ShouldBe(1);
         }
+
+        [TestMethod]
+        public void ResolveRepoName_prefers_the_most_specific_nested_mapping()
+        {
+            // A single VMR-style input rooted at the parent folder, with nested sub-repo mappings: each
+            // project must tag to the deepest mapping containing its own folder, not the parent's.
+            var mappings = new Dictionary<string, string>
+            {
+                [@"C:\vmr"] = "dotnet/vmr",
+                [@"C:\vmr\src\arcade"] = "dotnet/arcade",
+                [@"C:\vmr\src\roslyn"] = "dotnet/roslyn",
+            };
+
+            Program.ResolveRepoName(@"C:\vmr\src\arcade\src\Foo\Foo.csproj", mappings, "dotnet/vmr").ShouldBe("dotnet/arcade");
+            Program.ResolveRepoName(@"C:\vmr\src\roslyn\Bar\Bar.csproj", mappings, "dotnet/vmr").ShouldBe("dotnet/roslyn");
+        }
+
+        [TestMethod]
+        public void ResolveRepoName_falls_back_to_the_input_tag_outside_any_nested_mapping()
+        {
+            var mappings = new Dictionary<string, string>
+            {
+                [@"C:\vmr"] = "dotnet/vmr",
+                [@"C:\vmr\src\arcade"] = "dotnet/arcade",
+            };
+
+            // Directly under the VMR root but not under any sub-repo -> the whole input's tag.
+            Program.ResolveRepoName(@"C:\vmr\eng\Build\Build.csproj", mappings, "dotnet/vmr").ShouldBe("dotnet/vmr");
+            // No mapping contains it and no fallback -> untagged.
+            Program.ResolveRepoName(@"C:\other\Baz\Baz.csproj", mappings, "").ShouldBe("");
+        }
+
+        [TestMethod]
+        public void ResolveRepoChain_returns_the_full_ancestry_outermost_first()
+        {
+            var mappings = new Dictionary<string, string>
+            {
+                [@"C:\vmr"] = "dotnet/vmr",
+                [@"C:\vmr\src\arcade"] = "dotnet/arcade",
+            };
+
+            // A sub-repo project carries both its parent (vmr) and its own repo (arcade), parent first.
+            Program.ResolveRepoChain(@"C:\vmr\src\arcade\src\Foo\Foo.csproj", mappings, "dotnet/vmr")
+                .ShouldBe(new[] { "dotnet/vmr", "dotnet/arcade" });
+
+            // A project only under the VMR root is a single-element chain of just the parent.
+            Program.ResolveRepoChain(@"C:\vmr\eng\Build\Build.csproj", mappings, "dotnet/vmr")
+                .ShouldBe(new[] { "dotnet/vmr" });
+        }
+
+        [TestMethod]
+        public void ResolveRepoChain_falls_back_to_the_input_tag_or_empty()
+        {
+            var mappings = new Dictionary<string, string>
+            {
+                [@"C:\vmr\src\arcade"] = "dotnet/arcade",
+            };
+
+            // No mapping contains it -> single-element fallback chain.
+            Program.ResolveRepoChain(@"C:\other\Baz\Baz.csproj", mappings, "dotnet/vmr")
+                .ShouldBe(new[] { "dotnet/vmr" });
+            // No mapping and no fallback -> untagged (empty chain).
+            Program.ResolveRepoChain(@"C:\other\Baz\Baz.csproj", mappings, "").ShouldBeEmpty();
+        }
+
+        [TestMethod]
+        public void Nested_repo_chain_groups_a_sub_repo_under_its_parent_repo_folder()
+        {
+            var root = new Folder<ProjectSkeleton>();
+            var solutionCounts = new Dictionary<string, int> { ["dotnet/subx"] = 1 };
+
+            var folder = Program.GetSolutionExplorerGroupingFolder(
+                root, new[] { "dotnet/vmr", "dotnet/subx" }, "SubX", distinctRepoCount: 3, solutionCounts);
+
+            // The sub-repo folder is nested under its parent repo folder, each carrying its own ancestry.
+            var vmrFolder = root.Folders["dotnet/vmr"];
+            vmrFolder.Kind.ShouldBe(FolderKind.Repo);
+            vmrFolder.RepoChain.ShouldBe(new[] { "dotnet/vmr" });
+
+            var subxFolder = vmrFolder.Folders["dotnet/subx"];
+            subxFolder.ShouldBeSameAs(folder);
+            subxFolder.Kind.ShouldBe(FolderKind.Repo);
+            subxFolder.RepoName.ShouldBe("dotnet/subx");
+            subxFolder.RepoChain.ShouldBe(new[] { "dotnet/vmr", "dotnet/subx" });
+        }
     }
 }

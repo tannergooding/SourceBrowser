@@ -31,6 +31,14 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 sb.Append("RepoName=").AppendLine(RepoName);
             }
 
+            // Full repo ancestry (outermost first, own repo last), '|'-joined -- lets a parent repo
+            // include its nested sub-repos in filtering/grouping. '|' can't occur in an owner/repo name,
+            // so it stays a safe field separator here and in Assemblies.txt.
+            if (RepoChain is { Count: > 0 })
+            {
+                sb.Append("RepoChain=").AppendLine(string.Join("|", RepoChain));
+            }
+
             if (!string.IsNullOrEmpty(SolutionName))
             {
                 sb.Append("SolutionName=").AppendLine(SolutionName);

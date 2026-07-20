@@ -27,8 +27,14 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         public string ProjectSourcePath { get; set; }
         public string ProjectFilePath { get; private set; }
 
-        /// <summary>Repo/solution tags inherited from the owning SolutionGenerator, if any.</summary>
-        public string RepoName => SolutionGenerator?.RepoName ?? string.Empty;
+        /// <summary>Repo tag resolved per project from the owning SolutionGenerator's /repoPath
+        /// mappings (falling back to its per-input tag); solution tag is inherited as-is.</summary>
+        public string RepoName => SolutionGenerator?.ResolveRepoName(ProjectFilePath) ?? string.Empty;
+
+        /// <summary>Repo ancestry resolved per project (outermost repo first, own repo last), so a
+        /// parent repo can include its nested sub-repos in filtering/grouping. See
+        /// <see cref="SolutionGenerator.ResolveRepoChain"/>.</summary>
+        public IReadOnlyList<string> RepoChain => SolutionGenerator?.ResolveRepoChain(ProjectFilePath) ?? (IReadOnlyList<string>)System.Array.Empty<string>();
         public string SolutionName => SolutionGenerator?.SolutionName ?? string.Empty;
         public List<string> OtherFiles { get; set; }
         public IEnumerable<MEF.ISymbolVisitor> PluginSymbolVisitors { get; private set; }

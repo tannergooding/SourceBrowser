@@ -901,24 +901,56 @@ function updateGroupHeaderOffset(note) {
 }
 
 // Hides/shows each project's subtree in the merged Solution Explorer (SolutionExplorer.html)
-// based on its data-repo attribute (see SolutionFinalizer.GetProjectExplorerText), which is only
-// emitted at all when the site has a repo tag. A "repoHidden" CSS class (rather than toggling
-// inline display directly) is used so this doesn't fight with the folder expand/collapse logic,
-// which also manipulates display on the same elements.
+// based on its data-repo-path attribute (see SolutionFinalizer.GetProjectExplorerText), which is
+// only emitted when the site has a repo tag. data-repo-path is the node's full repo ancestry
+// ('|'-joined, outermost first), so selecting a parent repo (e.g. dotnet/vmr) keeps its nested
+// sub-repos visible: a leaf shows when the selection is on its path; an ancestor grouping folder
+// shows when it's on the *selection's* path (so it doesn't hide the matching descendants nested
+// inside it). A "repoHidden" CSS class (rather than toggling inline display) is used so this
+// doesn't fight the folder expand/collapse logic, which also manipulates display.
 function filterSolutionExplorerByRepo(repo) {
-    var nodes = document.querySelectorAll("[data-repo]");
+    var nodes = document.querySelectorAll("[data-repo-path]");
+
+    // The selected repo's own ancestry, read off any node whose innermost repo is the selection.
+    var selChain = repo ? [repo] : [];
+    if (repo) {
+        for (var s = 0; s < nodes.length; s++) {
+            var segs = nodes[s].getAttribute("data-repo-path").split("|");
+            if (segs[segs.length - 1] === repo) {
+                selChain = segs;
+                break;
+            }
+        }
+    }
+
     for (var i = 0; i < nodes.length; i++) {
         var node = nodes[i];
-        var hide = !!repo && node.getAttribute("data-repo") !== repo;
-        node.classList.toggle("repoHidden", hide);
+        var path = node.getAttribute("data-repo-path").split("|");
+        var own = path[path.length - 1];
+
+        // Leaves (project title rows and project file-tree folders) only show when the selection is
+        // on their path. Grouping folders (repo/solution wrappers, which have no data-assembly) also
+        // show when they're an ancestor on the selection's path, so hiding them wouldn't hide the
+        // matching sub-repos nested within.
+        var isLeaf = node.hasAttribute("data-assembly") ||
+            node.className.indexOf("projectCSInSolution") !== -1 ||
+            node.className.indexOf("projectVBInSolution") !== -1;
+
+        var visible = !repo ||
+            path.indexOf(repo) !== -1 ||
+            (!isLeaf && selChain.indexOf(own) !== -1);
+
+        node.classList.toggle("repoHidden", !visible);
     }
+
+    hideEmptyGroupingFolders();
 
     // Once scoped to a single repo, that repo's own grouping header (see
     // Program.GetSolutionExplorerGroupingFolder -- only emitted when the site spans more than one
     // repo) is redundant: the user already picked it from the dropdown. Unwrap it -- hide the
     // header label and force its folder open -- so the tree reads the same as an ungrouped site
-    // instead of showing an always-selected wrapper around everything. Other repos' headers are
-    // left alone; they're already fully hidden by the data-repo pass above.
+    // instead of showing an always-selected wrapper around everything. Nested sub-repo headers are
+    // left alone so their grouping stays visible underneath.
     var repoTitles = document.querySelectorAll(".repoTitle");
     for (var i = 0; i < repoTitles.length; i++) {
         var title = repoTitles[i];
@@ -928,6 +960,41 @@ function filterSolutionExplorerByRepo(repo) {
         if (isSelectedRepo) {
             expandFolderIfNeeded(title.nextElementSibling);
         }
+    }
+}
+
+// After the per-node repo pass, a grouping folder can be left visible with all of its project rows
+// hidden -- most visibly an MSBuild solution folder (e.g. "SolutionFolder"), which carries no
+// data-repo-path and so is never touched by the pass above, but also any repo/solution wrapper whose
+// matching descendants all live elsewhere. Hide any such now-empty grouping folder (and its title) so
+// the filtered tree doesn't show hollow headers. A grouping folder counts as non-empty when it still
+// contains a visible project row; file-tree folders inside a project (data-assembly subtree) are left
+// alone so a matched project's own folders aren't pruned.
+function hideEmptyGroupingFolders() {
+    var titles = document.querySelectorAll("#rootFolder .folderTitle");
+    for (var i = 0; i < titles.length; i++) {
+        var title = titles[i];
+        if (title.id === "rootFolder" || title.closest("[data-assembly]")) {
+            continue;
+        }
+
+        var folder = title.nextElementSibling;
+        if (!folder || folder.className.indexOf("folder") === -1) {
+            continue;
+        }
+
+        var projects = folder.querySelectorAll(".projectCSInSolution, .projectVBInSolution");
+        var hasVisibleProject = false;
+        for (var j = 0; j < projects.length; j++) {
+            if (!projects[j].classList.contains("repoHidden")) {
+                hasVisibleProject = true;
+                break;
+            }
+        }
+
+        var empty = projects.length > 0 && !hasVisibleProject;
+        title.classList.toggle("repoHidden", empty);
+        folder.classList.toggle("repoHidden", empty);
     }
 }
 
@@ -1506,12 +1573,47 @@ function onSolutionExplorerLoad() {
 function loadSolutionExplorer() {
     makeFoldersCollapsible(/* closed folder */"202.png", "201.png", "content/icons/", initializeSolutionExplorerFolder);
     document.getElementById("rootFolder").style.display = "block";
+    normalizeGroupingBands();
 
     // Apply whatever repo is currently selected (persisted on `top`) so navigating to the
     // Solution Explorer after already picking a repo in search stays scoped the same way, even
     // before the dropdown itself has finished being populated below.
     filterSolutionExplorerByRepo(getSelectedRepoFilter());
     initRepoFilter(function (repo) { filterSolutionExplorerByRepo(repo); });
+}
+
+// A nested repo/solution header sits inside one indented .folder per depth level, so its box starts at
+// the indented x and its tint band can't reach the pane's left edge the way the outermost repo's does.
+// Pull each header's box back to the leftmost (depth-0) header's x via negative margin, then re-add the
+// removed offset as padding so the text/arrow stay at their depth indent. Combined with min-width:100vw
+// the band then spans the full pane at every depth, matching the outermost repo. Idempotent: once a
+// header is aligned its measured offset is zero, so re-running (e.g. after a theme toggle) is a no-op.
+function normalizeGroupingBands() {
+    var titles = document.querySelectorAll("body.solutionExplorerBody .repoTitle, body.solutionExplorerBody .solutionTitle");
+    if (!titles.length) {
+        return;
+    }
+
+    var lefts = [];
+    var minLeft = Infinity;
+    for (var i = 0; i < titles.length; i++) {
+        var left = titles[i].getBoundingClientRect().left;
+        lefts.push(left);
+        if (left < minLeft) {
+            minLeft = left;
+        }
+    }
+
+    for (var j = 0; j < titles.length; j++) {
+        var shift = lefts[j] - minLeft;
+        if (shift <= 0) {
+            continue;
+        }
+        var el = titles[j];
+        var cs = getComputedStyle(el);
+        el.style.marginLeft = (parseFloat(cs.marginLeft) - shift) + "px";
+        el.style.paddingLeft = (parseFloat(cs.paddingLeft) + shift) + "px";
+    }
 }
 
 function initializeNamespaceExplorer() {
@@ -1724,6 +1826,12 @@ function expandCollapseFolder(capturedFolder, capturedPlusMinus, capturedFolderI
 
             capturedFolder.everExpanded = true;
             capturedFolder.style.display = 'block';
+
+            // Nested repo/solution headers are measured for full-width alignment only once visible;
+            // realign now that this expand may have revealed some (no-op for already-aligned ones).
+            if (capturedFolder.querySelector(".repoTitle, .solutionTitle")) {
+                normalizeGroupingBands();
+            }
         }
         else {
             capturedPlusMinus.src = pathToIcons + "plus.png";

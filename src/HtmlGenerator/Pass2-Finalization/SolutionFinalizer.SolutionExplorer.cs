@@ -68,7 +68,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
                     var dataRepoAttribute = string.IsNullOrEmpty(subfolder.RepoName)
                         ? ""
-                        : string.Format(" data-repo=\"{0}\"", subfolder.RepoName);
+                        : string.Format(" data-repo=\"{0}\" data-repo-path=\"{1}\"",
+                            subfolder.RepoName, FormatRepoPath(subfolder.RepoChain, subfolder.RepoName));
 
                     writer.WriteLine(
                         @"<div class=""{0}""{1}>{2}</div><div class=""folder""{1}>",
@@ -82,14 +83,22 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             {
                 foreach (var project in folder.Items)
                 {
-                    WriteProject(project.AssemblyName, project.RepoName, writer);
+                    WriteProject(project.AssemblyName, project.RepoName, project.RepoChain, writer);
                 }
             }
         }
 
-        private void WriteProject(string assemblyName, string repoName, StreamWriter writer)
+        // Repo ancestry ('|'-joined, outermost first) baked into the DOM so the client-side filter can
+        // scope by ancestor-or-self: selecting a parent repo keeps its nested sub-repos visible.
+        internal static string FormatRepoPath(System.Collections.Generic.IReadOnlyList<string> repoChain, string repoName)
         {
-            var projectExplorerText = GetProjectExplorerText(assemblyName, repoName);
+            var path = (repoChain != null && repoChain.Count > 0) ? string.Join("|", repoChain) : repoName;
+            return WebUtility.HtmlEncode(path ?? "");
+        }
+
+        private void WriteProject(string assemblyName, string repoName, System.Collections.Generic.IReadOnlyList<string> repoChain, StreamWriter writer)
+        {
+            var projectExplorerText = GetProjectExplorerText(assemblyName, repoName, repoChain);
             if (string.IsNullOrEmpty(projectExplorerText))
             {
                 return;
@@ -171,7 +180,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             }
         }
 
-        private string GetProjectExplorerText(string assemblyName, string repoName)
+        private string GetProjectExplorerText(string assemblyName, string repoName, System.Collections.Generic.IReadOnlyList<string> repoChain = null)
         {
             var fileName = Path.Combine(SolutionDestinationFolder, assemblyName, Constants.ProjectExplorer + ".html");
             if (!File.Exists(fileName))
@@ -188,10 +197,12 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
             // Only add a data-repo attribute (and thus a client-side filtering hook) when the site
             // actually has a repo tag -- keeps the untagged/single-repo output identical to before
-            // repo tagging existed.
+            // repo tagging existed. data-repo-path carries the full ancestry so a parent repo filter
+            // includes its nested sub-repos.
+            var repoPath = FormatRepoPath(repoChain, repoName);
             var folderAttributes = string.IsNullOrEmpty(repoName)
                 ? string.Format("class=\"folder\" data-assembly=\"{0}\"", assemblyName)
-                : string.Format("class=\"folder\" data-assembly=\"{0}\" data-repo=\"{1}\"", assemblyName, repoName);
+                : string.Format("class=\"folder\" data-assembly=\"{0}\" data-repo=\"{1}\" data-repo-path=\"{2}\"", assemblyName, repoName, repoPath);
             text = text.Replace("</div><div>", string.Format("</div><div {0}>", folderAttributes));
 
             // The project title (the always-visible "Project2"-style line) is a sibling that comes
@@ -199,8 +210,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             // data-repo attribute or hiding the folder above leaves the title behind in the list.
             if (!string.IsNullOrEmpty(repoName))
             {
-                text = text.Replace("class=\"projectCS\"", string.Format("class=\"projectCS\" data-repo=\"{0}\"", repoName));
-                text = text.Replace("class=\"projectVB\"", string.Format("class=\"projectVB\" data-repo=\"{0}\"", repoName));
+                text = text.Replace("class=\"projectCS\"", string.Format("class=\"projectCS\" data-repo=\"{0}\" data-repo-path=\"{1}\"", repoName, repoPath));
+                text = text.Replace("class=\"projectVB\"", string.Format("class=\"projectVB\" data-repo=\"{0}\" data-repo-path=\"{1}\"", repoName, repoPath));
             }
 
             text = text.Replace("projectCS", "projectCSInSolution");

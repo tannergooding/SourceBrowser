@@ -157,6 +157,22 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             var configAxes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             var mergeConfigsOnly = false;
 
+            // Both /serverPath: and /repo: map a local repo folder to a source-link base URL, keyed by
+            // that folder. Mapping the same folder twice with different URLs (e.g. the VMR listed as both
+            // dotnet/dotnet and dotnet-dotnet-windows, resolving to one checkout) is last-writer-wins, so
+            // warn which URL is kept and which is dropped rather than silently losing one.
+            void MapServerPath(string folder, string url)
+            {
+                if (serverPathMappings.TryGetValue(folder, out var existing) && existing != url)
+                {
+                    Log.Write(
+                        $"Duplicate server URL for repo folder '{folder}': keeping '{url}' (last wins), ignoring '{existing}'.",
+                        ConsoleColor.Yellow);
+                }
+
+                serverPathMappings[folder] = url;
+            }
+
             foreach (var arg in args)
             {
                 if (arg.StartsWith("/out:", StringComparison.Ordinal))
@@ -190,7 +206,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                         continue;
                     }
 
-                    serverPathMappings[Path.GetFullPath(match.Groups["from"].Value)] = match.Groups["to"].Value;
+                    MapServerPath(Path.GetFullPath(match.Groups["from"].Value), match.Groups["to"].Value);
                     continue;
                 }
 
@@ -240,7 +256,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
                     var repoFolder = Path.GetFullPath(match.Groups["from"].Value);
                     repoPathMappings[repoFolder] = match.Groups["name"].Value;
-                    serverPathMappings[repoFolder] = match.Groups["to"].Value;
+                    MapServerPath(repoFolder, match.Groups["to"].Value);
                     continue;
                 }
 

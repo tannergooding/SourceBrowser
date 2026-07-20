@@ -169,7 +169,7 @@ namespace Microsoft.SourceBrowser.SourceIndexServer.Models
         public IReadOnlyList<string> GetDistinctRepoNames()
         {
             return assemblies
-                .Select(a => a.RepoName)
+                .SelectMany(a => a.RepoChain ?? (string.IsNullOrEmpty(a.RepoName) ? System.Array.Empty<string>() : new[] { a.RepoName }))
                 .Where(r => !string.IsNullOrEmpty(r))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .OrderBy(r => r, StringComparer.OrdinalIgnoreCase)

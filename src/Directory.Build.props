@@ -7,8 +7,6 @@
 
   <PropertyGroup>
     <NuGetVersion>1.0.47</NuGetVersion>
-    <NuGetVersionRoslyn>5.6.0</NuGetVersionRoslyn>
-    <NuGetVersionMSBuild>18.7.1</NuGetVersionMSBuild>
   </PropertyGroup>
 
 </Project>

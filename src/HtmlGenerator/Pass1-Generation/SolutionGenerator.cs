@@ -27,9 +27,35 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         /// <summary>
         /// Optional repo display name tag applied to every assembly generated from this solution,
         /// set by the caller (see Program.IndexSolutionsAsync) via /repoPath or /repo. Empty when
-        /// untagged, which is the default and keeps generated output unchanged.
+        /// untagged, which is the default and keeps generated output unchanged. Used only as the
+        /// fallback for projects not under any nested mapping -- see <see cref="ResolveRepoName"/>.
         /// </summary>
         public string RepoName { get; set; } = string.Empty;
+
+        /// <summary>
+        /// All /repoPath (and /repo) folder-to-name mappings, so each project's repo tag can be
+        /// resolved from its own folder rather than inheriting the whole input's tag. Lets one input
+        /// (e.g. a VMR) tag its sub-repo projects individually. Null/empty leaves every project on the
+        /// <see cref="RepoName"/> fallback.
+        /// </summary>
+        public IReadOnlyDictionary<string, string> RepoPathMappings { get; set; }
+
+        /// <summary>Site-wide distinct repo count and per-repo solution counts, computed once by the
+        /// caller, used to decide whether Solution Explorer Repo/Solution grouping folders apply -- see
+        /// Program.GetSolutionExplorerGroupingFolder.</summary>
+        public int DistinctRepoCount { get; set; }
+        public IReadOnlyDictionary<string, int> SolutionCountsByRepo { get; set; }
+
+        /// <summary>Resolves the repo tag for a single project: most specific /repoPath mapping
+        /// containing the project's folder wins, falling back to this solution's <see cref="RepoName"/>.</summary>
+        public string ResolveRepoName(string projectFilePath)
+            => Program.ResolveRepoName(projectFilePath, RepoPathMappings, RepoName);
+
+        /// <summary>Resolves a single project's full repo ancestry (outermost first, own repo last)
+        /// from the /repoPath mappings, so a parent repo can group its nested sub-repos. See
+        /// <see cref="Program.ResolveRepoChain"/>.</summary>
+        public IReadOnlyList<string> ResolveRepoChain(string projectFilePath)
+            => Program.ResolveRepoChain(projectFilePath, RepoPathMappings, RepoName);
 
         /// <summary>
         /// Optional solution display name tag applied to every assembly generated from this

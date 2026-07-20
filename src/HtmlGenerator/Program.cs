@@ -392,16 +392,20 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
             // Solution tag is auto-derived from each top-level input's file name when it's a
             // .sln/.slnx; standalone project/binlog inputs aren't part of a solution, so they
-            // stay untagged. Repo tag is resolved by longest-prefix match of each input's folder
-            // against /repoPath (or /repo) mappings; untagged when no mapping applies. Resolve
-            // both up front (rather than per-iteration below) so we know, before building any
-            // folder, whether the merged site actually spans more than one repo/solution.
+            // stay untagged. Repo tag is resolved per project (see Program.ResolveRepoName): the
+            // most specific /repoPath (or /repo) mapping containing that project's own folder wins,
+            // so a single VMR-style input can span many sub-repos. The per-input repo tag below is
+            // only the fallback for projects not under any nested mapping. Solution counts stay
+            // per-input (used only to decide whether a repo needs Solution sub-folders).
             var pathTags = solutionFilePaths
                 .Select(path => (Path: path, RepoName: GetRepoName(path, repoPathMappings), SolutionName: GetSolutionName(path)))
                 .ToList();
 
-            var distinctRepoCount = pathTags
-                .Select(t => t.RepoName)
+            // Grouping/filtering keys off the full declared repo set, not just the per-input tags: a
+            // single input (e.g. dotnet/dotnet) can itself span many /repoPath sub-repos, so counting
+            // inputs alone would collapse them to one and suppress grouping. All repo names come from
+            // /repo|/repoPath, so the distinct mapping values are exactly that set.
+            var distinctRepoCount = (repoPathMappings?.Values ?? Enumerable.Empty<string>())
                 .Where(r => !string.IsNullOrEmpty(r))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Count();
@@ -416,13 +420,12 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
             foreach (var (path, repoName, solutionName) in pathTags)
             {
-                // Only introduce Repo/Solution grouping folders when the merged site actually has
-                // more than one repo (or, within a repo, more than one solution) to distinguish --
-                // keeps single-repo/untagged sites' Solution Explorer tree byte-identical to before
-                // repo tagging existed. Untagged inputs stay flat at the top level even on a
-                // multi-repo site, alongside the repo folders.
-                var solutionFolder = GetSolutionExplorerGroupingFolder(
-                    mergedSolutionExplorerRoot, repoName, solutionName, distinctRepoCount, solutionCountsByRepo);
+                // The base folder each input's projects attach under. Repo/Solution grouping is applied
+                // per project downstream (SolutionGenerator/GenerateFromBuildLog) from each project's own
+                // resolved repo, so a single input can fan its projects out across several repo folders.
+                // repoName/solutionName here are the per-input fallback tags for projects not under any
+                // nested /repoPath mapping.
+                var inputRoot = mergedSolutionExplorerRoot;
 
                 if (rootPath is object)
                 {
@@ -431,7 +434,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
                     foreach (var segment in segments)
                     {
-                        solutionFolder = solutionFolder.GetOrCreateFolder(segment);
+                        inputRoot = inputRoot.GetOrCreateFolder(segment);
                     }
                 }
 
@@ -449,11 +452,14 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                                 serverPathMappings,
                                 processedAssemblyList,
                                 assemblyNames,
-                                solutionFolder,
+                                inputRoot,
                                 typeForwards,
                                 includeSourceGeneratedDocuments: includeSourceGeneratedDocuments,
                                 repoName: repoName,
-                                solutionName: solutionName);
+                                solutionName: solutionName,
+                                repoPathMappings: repoPathMappings,
+                                distinctRepoCount: distinctRepoCount,
+                                solutionCountsByRepo: solutionCountsByRepo);
                         }
                         
                         continue;
@@ -484,9 +490,12 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                         solutionGenerator.GlobalAssemblyList = assemblyNames;
                         solutionGenerator.RepoName = repoName;
                         solutionGenerator.SolutionName = solutionName;
+                        solutionGenerator.RepoPathMappings = repoPathMappings;
+                        solutionGenerator.DistinctRepoCount = distinctRepoCount;
+                        solutionGenerator.SolutionCountsByRepo = solutionCountsByRepo;
                         using (Disposable.Timing("Pass1 writing for " + path))
                         {
-                            await solutionGenerator.GenerateAsync(cancellationToken, processedAssemblyList, solutionFolder);
+                            await solutionGenerator.GenerateAsync(cancellationToken, processedAssemblyList, inputRoot);
                         }
                     }
                 }
@@ -509,20 +518,50 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             int distinctRepoCount,
             IReadOnlyDictionary<string, int> solutionCountsByRepo)
         {
+            var chain = string.IsNullOrEmpty(repoName) ? Array.Empty<string>() : new[] { repoName };
+            return GetSolutionExplorerGroupingFolder(root, chain, solutionName, distinctRepoCount, solutionCountsByRepo);
+        }
+
+        /// <summary>Chain-aware overload: <paramref name="repoChain"/> is a project's repo ancestry
+        /// (outermost repo first, the project's own repo last), so a VMR sub-repo (e.g. dotnet/subx
+        /// nested under dotnet/vmr) is grouped UNDER its parent repo folder rather than as a flat
+        /// sibling. The innermost repo drives the Solution sub-folder decision. Each repo folder
+        /// carries its own ancestry so the client-side filter can scope by ancestor-or-self.</summary>
+        public static Folder<ProjectSkeleton> GetSolutionExplorerGroupingFolder(
+            Folder<ProjectSkeleton> root,
+            IReadOnlyList<string> repoChain,
+            string solutionName,
+            int distinctRepoCount,
+            IReadOnlyDictionary<string, int> solutionCountsByRepo)
+        {
             var folder = root;
 
-            if (distinctRepoCount > 1 && !string.IsNullOrEmpty(repoName))
+            if (distinctRepoCount > 1 && repoChain != null && repoChain.Count > 0)
             {
-                folder = folder.GetOrCreateFolder(repoName);
-                folder.Kind = FolderKind.Repo;
-                folder.RepoName = repoName;
+                var prefix = new List<string>(repoChain.Count);
+                foreach (var repo in repoChain)
+                {
+                    if (string.IsNullOrEmpty(repo))
+                    {
+                        continue;
+                    }
 
-                if (solutionCountsByRepo.TryGetValue(repoName, out var solutionCount) &&
+                    prefix.Add(repo);
+                    folder = folder.GetOrCreateFolder(repo);
+                    folder.Kind = FolderKind.Repo;
+                    folder.RepoName = repo;
+                    folder.RepoChain = prefix.ToArray();
+                }
+
+                var innermost = repoChain[repoChain.Count - 1];
+                if (!string.IsNullOrEmpty(innermost) &&
+                    solutionCountsByRepo.TryGetValue(innermost, out var solutionCount) &&
                     solutionCount > 1 && !string.IsNullOrEmpty(solutionName))
                 {
                     folder = folder.GetOrCreateFolder(solutionName);
                     folder.Kind = FolderKind.Solution;
-                    folder.RepoName = repoName;
+                    folder.RepoName = innermost;
+                    folder.RepoChain = repoChain;
                 }
             }
 
@@ -540,7 +579,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             return string.Empty;
         }
 
-        private static string GetRepoName(string path, IReadOnlyDictionary<string, string> repoPathMappings)
+        public static string GetRepoName(string path, IReadOnlyDictionary<string, string> repoPathMappings)
         {
             if (repoPathMappings == null || repoPathMappings.Count == 0)
             {
@@ -565,6 +604,64 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             }
 
             return bestMatch != null ? repoPathMappings[bestMatch] : string.Empty;
+        }
+
+        /// <summary>Resolves a single project's repo tag: the most specific /repoPath (or /repo) mapping
+        /// containing that project's own folder wins (longest-prefix), falling back to the whole input's
+        /// tag when no nested mapping applies. This is what lets a VMR-style input (e.g. dotnet/dotnet)
+        /// tag each sub-repo project (src/arcade -> dotnet/arcade, ...) instead of stamping the parent
+        /// repo onto everything.</summary>
+        public static string ResolveRepoName(string projectFilePath, IReadOnlyDictionary<string, string> repoPathMappings, string fallbackRepoName)
+        {
+            var resolved = GetRepoName(projectFilePath, repoPathMappings);
+            return !string.IsNullOrEmpty(resolved) ? resolved : (fallbackRepoName ?? string.Empty);
+        }
+
+        /// <summary>Resolves a single project's full repo ancestry: every /repoPath (or /repo) mapping
+        /// whose folder contains the project, ordered outermost (least specific) to innermost (the
+        /// project's own repo, == <see cref="ResolveRepoName"/>). This is what lets a parent repo (e.g.
+        /// dotnet/vmr) include its nested sub-repos (dotnet/subx, ...) both in the Solution Explorer
+        /// (nested folders) and in filtering (ancestor-or-self). Falls back to a single-element chain of
+        /// <paramref name="fallbackRepoName"/> when no nested mapping applies; empty when untagged.</summary>
+        public static IReadOnlyList<string> ResolveRepoChain(string projectFilePath, IReadOnlyDictionary<string, string> repoPathMappings, string fallbackRepoName)
+        {
+            var chain = GetRepoChain(projectFilePath, repoPathMappings);
+            if (chain.Count > 0)
+            {
+                return chain;
+            }
+
+            return string.IsNullOrEmpty(fallbackRepoName) ? Array.Empty<string>() : new[] { fallbackRepoName };
+        }
+
+        private static List<string> GetRepoChain(string path, IReadOnlyDictionary<string, string> repoPathMappings)
+        {
+            var chain = new List<string>();
+            if (repoPathMappings == null || repoPathMappings.Count == 0)
+            {
+                return chain;
+            }
+
+            var directory = Path.GetDirectoryName(path);
+            if (string.IsNullOrEmpty(directory))
+            {
+                return chain;
+            }
+
+            // Shortest-prefix first == outermost repo first; nested mappings append their more specific
+            // repo, so the project's own repo lands last.
+            foreach (var candidate in repoPathMappings.Keys
+                .Where(k => Paths.IsOrContains(k, directory))
+                .OrderBy(k => k.Length))
+            {
+                var repo = repoPathMappings[candidate];
+                if (!string.IsNullOrEmpty(repo) && !chain.Contains(repo, StringComparer.OrdinalIgnoreCase))
+                {
+                    chain.Add(repo);
+                }
+            }
+
+            return chain;
         }
 
         private static void FinalizeProjects(bool emitAssemblyList, Federation federation)

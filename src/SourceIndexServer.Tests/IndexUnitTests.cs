@@ -350,6 +350,40 @@ namespace Microsoft.SourceBrowser.HtmlGenerator.Tests
             }
         }
 
+        [TestMethod]
+        public void TestRepoFilter_ParentRepoIncludesItsNestedSubRepos()
+        {
+            using (var index = new Index())
+            {
+                var testData = new List<DeclaredSymbolInfo>
+                {
+                    new DeclaredSymbolInfo { Name = "WidgetVmr", Description = "V.WidgetVmr", AssemblyNumber = 0 },
+                    new DeclaredSymbolInfo { Name = "WidgetSubX", Description = "X.WidgetSubX", AssemblyNumber = 1 },
+                    new DeclaredSymbolInfo { Name = "WidgetOther", Description = "O.WidgetOther", AssemblyNumber = 2 },
+                };
+
+                var huffman = Huffman.Create(testData.Select(d => d.Description));
+                index.indexFinishedPopulating = true;
+                index.huffman = huffman;
+                index.symbols = testData.Select(dsi => new IndexEntry(dsi)).ToList();
+                index.PopulateSymbolsById();
+                index.assemblies = new List<AssemblyInfo>
+                {
+                    new AssemblyInfo { AssemblyName = "V", ProjectKey = 0, RepoName = "dotnet/vmr", SolutionName = "Vmr", RepoChain = new[] { "dotnet/vmr" } },
+                    new AssemblyInfo { AssemblyName = "X", ProjectKey = 1, RepoName = "dotnet/subx", SolutionName = "SubX", RepoChain = new[] { "dotnet/vmr", "dotnet/subx" } },
+                    new AssemblyInfo { AssemblyName = "O", ProjectKey = 2, RepoName = "dotnet/other", SolutionName = "Other", RepoChain = new[] { "dotnet/other" } },
+                };
+
+                // Selecting the parent repo pulls in its nested sub-repo, but not an unrelated repo.
+                var parent = index.Get("repo:dotnet/vmr Widget");
+                CollectionAssert.AreEquivalent(new[] { "WidgetVmr", "WidgetSubX" }, parent.ResultSymbols.Select(s => s.Name).ToArray());
+
+                // Selecting the sub-repo directly stays scoped to just that sub-repo.
+                var child = index.Get("repo:dotnet/subx Widget");
+                CollectionAssert.AreEqual(new[] { "WidgetSubX" }, child.ResultSymbols.Select(s => s.Name).ToArray());
+            }
+        }
+
         public void Test(IEnumerable<KeyValuePair<string, string>> input, string pattern, params string[] expectedResults)
         {
             using (var index = new Index())

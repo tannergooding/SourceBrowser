@@ -335,9 +335,9 @@ namespace HtmlGenerator.Tests
 
             var solutionExplorerHtml = File.ReadAllText(Path.Combine(websiteDestinationFolder, Constants.SolutionExplorer + ".html"));
 
-            solutionExplorerHtml.Contains("<div class=\"folderTitle repoTitle\" data-repo=\"ClangSharp\">ClangSharp</div>").ShouldBeTrue(
+            solutionExplorerHtml.Contains("<div class=\"folderTitle repoTitle\" data-repo=\"ClangSharp\" data-repo-path=\"ClangSharp\">ClangSharp</div>").ShouldBeTrue(
                 "Utils must be nested under a ClangSharp repo folder now that the merged site spans two repos. Actual: " + solutionExplorerHtml);
-            solutionExplorerHtml.Contains("<div class=\"folderTitle repoTitle\" data-repo=\"LLVMSharp\">LLVMSharp</div>").ShouldBeTrue(
+            solutionExplorerHtml.Contains("<div class=\"folderTitle repoTitle\" data-repo=\"LLVMSharp\" data-repo-path=\"LLVMSharp\">LLVMSharp</div>").ShouldBeTrue(
                 "App must be nested under an LLVMSharp repo folder now that the merged site spans two repos. Actual: " + solutionExplorerHtml);
         }
 

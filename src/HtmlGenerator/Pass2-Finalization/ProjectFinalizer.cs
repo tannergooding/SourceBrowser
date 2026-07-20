@@ -135,6 +135,10 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         public string RepoName { get; private set; } = string.Empty;
         public string SolutionName { get; private set; } = string.Empty;
 
+        /// <summary>Full repo ancestry ('|'-joined, outermost first) read back from ProjectInfo.txt;
+        /// falls back to <see cref="RepoName"/> for indexes generated before chains were persisted.</summary>
+        public string RepoChain { get; private set; } = string.Empty;
+
         private void ReadBaseMembers()
         {
             var baseMembersFile = Path.Combine(ProjectDestinationFolder, Constants.BaseMembersFileName + ".txt");
@@ -188,6 +192,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 PublicTypeCount = Serialization.ReadLong(lines, "PublicTypes");
                 RepoName = Serialization.ReadValue(lines, "RepoName");
                 SolutionName = Serialization.ReadValue(lines, "SolutionName");
+                RepoChain = Serialization.ReadValue(lines, "RepoChain");
             }
 
             var referenceList = Path.Combine(ProjectDestinationFolder, Constants.ReferencedAssemblyList + ".txt");

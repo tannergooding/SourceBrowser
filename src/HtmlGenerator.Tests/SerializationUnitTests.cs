@@ -68,8 +68,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator.Tests
                 var lineA = lines.Single(l => l.StartsWith("A;", StringComparison.Ordinal));
                 var lineB = lines.Single(l => l.StartsWith("B;", StringComparison.Ordinal));
 
-                Assert.AreEqual("A;0;1;clangsharp;ClangSharp", lineA);
-                Assert.AreEqual("B;1;0;;", lineB);
+                Assert.AreEqual("A;0;1;clangsharp;ClangSharp;clangsharp", lineA);
+                Assert.AreEqual("B;1;0;;;", lineB);
             }
             finally
             {

@@ -2,7 +2,7 @@
   "profiles": {
     "HtmlGenerator": {
       "commandName": "Project",
-      "commandLineArgs": "$(SolutionDir)TestCode\\TestSolution.sln $(SolutionDir)TestCode\\RepoB\\RepoB.slnx /out:$(SolutionDir)src\\SourceIndexServer\\TestSite /force /config:windows /configAxes:os=windows /p:DefineConstants=WINDOWS /repoPath:\"$(SolutionDir)TestCode\\RepoB\"=\"RepoB\" /repoPath:\"$(SolutionDir)TestCode\"=\"RepoA\""
+      "commandLineArgs": "$(SolutionDir)TestCode\\TestSolution.sln $(SolutionDir)TestCode\\RepoB\\RepoB.slnx $(SolutionDir)TestCode\\RepoB\\RepoB2.slnx $(SolutionDir)TestCode\\Vmr\\Vmr.slnx /out:$(SolutionDir)src\\SourceIndexServer\\TestSite /force /config:windows /configAxes:os=windows /p:DefineConstants=WINDOWS /repoPath:\"$(SolutionDir)TestCode\\RepoB\"=\"RepoB\" /repoPath:\"$(SolutionDir)TestCode\"=\"RepoA\" /repoPath:\"$(SolutionDir)TestCode\\Vmr\"=\"dotnet/vmr\" /repoPath:\"$(SolutionDir)TestCode\\Vmr\\src\\SubRepoX\"=\"dotnet/subx\" /repoPath:\"$(SolutionDir)TestCode\\Vmr\\src\\SubRepoY\"=\"dotnet/suby\""
     }
   }
 }

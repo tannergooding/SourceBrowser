@@ -23,7 +23,10 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             Dictionary<(string, string), string> typeForwards = null,
             bool includeSourceGeneratedDocuments = true,
             string repoName = "",
-            string solutionName = "")
+            string solutionName = "",
+            IReadOnlyDictionary<string, string> repoPathMappings = null,
+            int distinctRepoCount = 0,
+            IReadOnlyDictionary<string, int> solutionCountsByRepo = null)
         {
             try
             {
@@ -48,6 +51,9 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                     solutionGenerator.GlobalAssemblyList = assemblyNames;
                     solutionGenerator.RepoName = repoName ?? string.Empty;
                     solutionGenerator.SolutionName = solutionName ?? string.Empty;
+                    solutionGenerator.RepoPathMappings = repoPathMappings;
+                    solutionGenerator.DistinctRepoCount = distinctRepoCount;
+                    solutionGenerator.SolutionCountsByRepo = solutionCountsByRepo;
                     await solutionGenerator.GenerateAsync(cancellationToken, processedAssemblyList, solutionExplorerRoot);
                 }
                 else
@@ -60,6 +66,9 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                         typeForwards: typeForwards);
                     solutionGenerator.RepoName = repoName ?? string.Empty;
                     solutionGenerator.SolutionName = solutionName ?? string.Empty;
+                    solutionGenerator.RepoPathMappings = repoPathMappings;
+                    solutionGenerator.DistinctRepoCount = distinctRepoCount;
+                    solutionGenerator.SolutionCountsByRepo = solutionCountsByRepo;
                     await solutionGenerator.GenerateAsync(cancellationToken);
                 }
             }

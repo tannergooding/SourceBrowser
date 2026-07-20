@@ -113,6 +113,21 @@ namespace HtmlGenerator.Tests
         }
 
         [TestMethod]
+        public void Duplicate_repo_folder_with_different_urls_keeps_the_last_one()
+        {
+            // The VMR is listed as both dotnet/dotnet and dotnet-dotnet-windows, which resolve to one
+            // local checkout -- so the same folder gets two /repo: URLs. Last writer wins (a warning is
+            // logged naming the kept vs. ignored URL); the folder still maps to exactly one URL.
+            var options = CommandLineOptions.Parse(
+                "/repo:\"a\"=\"dotnet/dotnet\"=\"https://example.com/first/\"",
+                "/repo:\"a\"=\"dotnet/dotnet\"=\"https://example.com/second/\"");
+
+            var serverMapping = options.ServerPathMappings.ShouldHaveSingleItem();
+            serverMapping.Key.ShouldBe(Path.GetFullPath("a"));
+            serverMapping.Value.ShouldBe("https://example.com/second/");
+        }
+
+        [TestMethod]
         public void Repo_meta_option_requires_all_three_segments()
         {
             var options = CommandLineOptions.Parse("/repo:a=clangsharp");

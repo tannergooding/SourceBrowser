@@ -878,7 +878,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             var orderedConfigs = configObjRoots.Keys.OrderBy(c => c, StringComparer.Ordinal).ToArray();
             var root = new Folder<ProjectSkeleton>();
 
-            var tagsByAssembly = new Dictionary<string, Tuple<string, string>>(StringComparer.OrdinalIgnoreCase);
+            var tagsByAssembly = new Dictionary<string, (string Repo, string Solution, string[] Chain)>(StringComparer.OrdinalIgnoreCase);
             foreach (var assemblyId in projectNames)
             {
                 tagsByAssembly[assemblyId] = ReadRepoAndSolutionName(configObjRoots, orderedConfigs, primaryConfig, assemblyId);
@@ -890,17 +890,17 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             // (or, within a repo, more than one solution), so single-repo/untagged config-merged sites
             // stay exactly as before this grouping feature existed.
             var distinctRepoCount = tagsByAssembly.Values
-                .Select(t => t.Item1)
+                .Select(t => t.Repo)
                 .Where(r => !string.IsNullOrEmpty(r))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Count();
 
             var solutionCountsByRepo = tagsByAssembly.Values
-                .Where(t => !string.IsNullOrEmpty(t.Item1))
-                .GroupBy(t => t.Item1, StringComparer.OrdinalIgnoreCase)
+                .Where(t => !string.IsNullOrEmpty(t.Repo))
+                .GroupBy(t => t.Repo, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(
                     g => g.Key,
-                    g => g.Select(t => t.Item2).Where(s => !string.IsNullOrEmpty(s)).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+                    g => g.Select(t => t.Solution).Where(s => !string.IsNullOrEmpty(s)).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
                     StringComparer.OrdinalIgnoreCase);
 
             foreach (var assemblyId in projectNames)
@@ -927,9 +927,9 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                     }
                 }
 
-                var (repoName, solutionName) = tagsByAssembly[assemblyId];
+                var (repoName, solutionName, repoChain) = tagsByAssembly[assemblyId];
 
-                var folder = Program.GetSolutionExplorerGroupingFolder(root, repoName, solutionName, distinctRepoCount, solutionCountsByRepo);
+                var folder = Program.GetSolutionExplorerGroupingFolder(root, repoChain, solutionName, distinctRepoCount, solutionCountsByRepo);
                 if (folderChain != null)
                 {
                     foreach (var segment in folderChain)
@@ -943,11 +943,12 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
                 // ProjectSkeleton.Name only affects sort order in the non-flattened tree (WriteFolder
                 // renders by AssemblyName regardless) -- the assemblyId is a reasonable stand-in for the
-                // Roslyn project display name we no longer have access to at merge time. RepoName is read
-                // back from the same per-project ProjectInfo.txt (Constants.ProjectInfoFileName) that the
-                // ordinary single-config ProjectFinalizer.ReadProjectInfo reads, so /repoPath tags survive
-                // the config merge instead of silently dropping out of SolutionExplorer.html.
-                folder.Add(new ProjectSkeleton(assemblyId, assemblyId, repoName));
+                // Roslyn project display name we no longer have access to at merge time. RepoName/RepoChain
+                // are read back from the same per-project ProjectInfo.txt (Constants.ProjectInfoFileName)
+                // that the ordinary single-config ProjectFinalizer.ReadProjectInfo reads, so /repoPath
+                // tags (and their ancestry) survive the config merge instead of dropping out of
+                // SolutionExplorer.html.
+                folder.Add(new ProjectSkeleton(assemblyId, assemblyId, repoName, repoChain));
             }
 
             return root;
@@ -961,7 +962,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         /// the folder-chain lookup above -- a project's tags shouldn't disappear just because the primary
         /// config happens to lack this file (e.g. the non-primary-only-project case).
         /// </summary>
-        private static Tuple<string, string> ReadRepoAndSolutionName(
+        private static (string Repo, string Solution, string[] Chain) ReadRepoAndSolutionName(
             IReadOnlyDictionary<string, string> configObjRoots,
             IReadOnlyList<string> orderedConfigs,
             string primaryConfig,
@@ -980,10 +981,10 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 }
             }
 
-            return tags ?? Tuple.Create(string.Empty, string.Empty);
+            return tags ?? (string.Empty, string.Empty, System.Array.Empty<string>());
         }
 
-        private static Tuple<string, string> ReadRepoAndSolutionNameFromConfig(string configObjRoot, string assemblyId)
+        private static (string Repo, string Solution, string[] Chain)? ReadRepoAndSolutionNameFromConfig(string configObjRoot, string assemblyId)
         {
             var projectInfoFile = Path.Combine(configObjRoot, assemblyId, Constants.ProjectInfoFileName + ".txt");
             if (!File.Exists(projectInfoFile))
@@ -992,9 +993,15 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             }
 
             var lines = File.ReadAllLines(projectInfoFile);
-            return Tuple.Create(
-                Serialization.ReadValue(lines, "RepoName") ?? string.Empty,
-                Serialization.ReadValue(lines, "SolutionName") ?? string.Empty);
+            var repo = Serialization.ReadValue(lines, "RepoName") ?? string.Empty;
+            var chainValue = Serialization.ReadValue(lines, "RepoChain") ?? string.Empty;
+            var chain = string.IsNullOrEmpty(chainValue)
+                ? (string.IsNullOrEmpty(repo) ? System.Array.Empty<string>() : new[] { repo })
+                : chainValue.Split('|');
+            return (
+                repo,
+                Serialization.ReadValue(lines, "SolutionName") ?? string.Empty,
+                chain);
         }
 
         /// <summary>
@@ -1077,6 +1084,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         {
             var assembliesAndProjects = new List<Tuple<string, string>>();
             var repoAndSolutionNamesByAssembly = new Dictionary<string, Tuple<string, string>>(StringComparer.OrdinalIgnoreCase);
+            var repoChainByAssembly = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             foreach (var assemblyId in projectNames)
             {
                 var projectInfoFile = Path.Combine(websiteDestinationFolder, assemblyId, Constants.ProjectInfoFileName + ".txt");
@@ -1088,6 +1096,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                     repoAndSolutionNamesByAssembly[assemblyId] = Tuple.Create(
                         Serialization.ReadValue(lines, "RepoName") ?? "",
                         Serialization.ReadValue(lines, "SolutionName") ?? "");
+                    repoChainByAssembly[assemblyId] = Serialization.ReadValue(lines, "RepoChain") ?? "";
                 }
 
                 assembliesAndProjects.Add(Tuple.Create(assemblyId, projectInfoLine));
@@ -1098,7 +1107,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             // already wrote into this same Assemblies.txt -- otherwise this second write silently wipes
             // them back out, exactly the kind of drop ComputeMergedSolutionExplorerRoot's ReadRepoName fix
             // was written to prevent for SolutionExplorer.html.
-            Serialization.WriteProjectMap(websiteDestinationFolder, assembliesAndProjects, mergedReferencingCounts.ToDictionary(kvp => kvp.Key, kvp => kvp.Value), repoAndSolutionNamesByAssembly);
+            Serialization.WriteProjectMap(websiteDestinationFolder, assembliesAndProjects, mergedReferencingCounts.ToDictionary(kvp => kvp.Key, kvp => kvp.Value), repoAndSolutionNamesByAssembly, repoChainByAssembly);
         }
     }
 }

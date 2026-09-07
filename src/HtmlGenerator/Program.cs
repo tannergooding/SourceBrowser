@@ -1,4 +1,5 @@
 using Microsoft.Build.Locator;
+using Basic.CompilerLog.Util;
 using Microsoft.CodeAnalysis;
 using Microsoft.SourceBrowser.BinLogParser;
 using Microsoft.SourceBrowser.Common;
@@ -15,6 +16,9 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.CodeAnalysis.Emit;
+
+[assembly: InternalsVisibleTo("HtmlGenerator.Tests")]
 
 namespace Microsoft.SourceBrowser.HtmlGenerator
 {
@@ -283,7 +287,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 + "[/useplugins] "
                 + "[/noplugins] "
                 + "[/noplugin:Git] "
-                + "<pathtosolution1.csproj|vbproj|sln|slnx|binlog|buildlog|dll|exe> [more solutions/projects..] "
+                + "<pathtosolution1.csproj|vbproj|sln|slnx|binlog|buildlog|complog|dll|exe> [more solutions/projects..] "
                 + "[/root:<root folder to enable relative .sln/.slnx folders>] "
                 + "[/in:<filecontaingprojectlist>] "
                 + "[/nobuiltinfederations] "
@@ -307,6 +311,15 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             {
                 var invocations = BinLogCompilerInvocationsReader.ExtractInvocations(filePath);
                 return invocations.Select(i => Path.GetFileNameWithoutExtension(i.Parsed.OutputFileName)).ToArray();
+            }
+
+            if (filePath.EndsWith(".complog", System.StringComparison.OrdinalIgnoreCase))
+            {
+                using var reader = CompilerLogReader.Create(filePath);
+                return reader.ReadAllCompilerCalls(cc => cc.Kind == CompilerCallKind.Regular)
+                    .Select(cc => Path.GetFileNameWithoutExtension(reader.ReadCompilerCallData(cc).AssemblyFileName))
+                    .Where(name => !string.IsNullOrEmpty(name))
+                    .ToArray();
             }
 
             return await AssemblyNameExtractor.GetAssemblyNamesAsync(filePath, cancellationToken);
@@ -336,6 +349,49 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 return;
             }
 
+            if (path.EndsWith(".complog", StringComparison.OrdinalIgnoreCase))
+            {
+                // A compiler log doesn't ship the emitted output binaries, so instead of reading
+                // type forwards off disk we re-emit each project's assembly (metadata only) from the
+                // persisted Roslyn compilation and read the forwards from those in-memory bytes.
+                // Read compilation data one project at a time to bound memory for large solutions.
+                // BasicAnalyzerKind.None keeps generated files inline without re-running generators.
+                using var reader = CompilerLogReader.Create(path, BasicAnalyzerKind.None);
+                foreach (var compilerCall in reader.ReadAllCompilerCalls(cc => cc.Kind == CompilerCallKind.Regular))
+                {
+                    var data = reader.ReadCompilationData(compilerCall);
+                    var compilation = data.GetCompilationAfterGenerators(out var diagnostics);
+                    if (diagnostics.Any(static d => d.Severity == DiagnosticSeverity.Error))
+                    {
+                        var errors = string.Join("; ", diagnostics
+                            .Where(static d => d.Severity == DiagnosticSeverity.Error)
+                            .Select(static d => d.ToString()));
+                        Log.Message($"Failed to emit assembly '{data.EmitData.AssemblyFileName}' from '{path}' while reading type forwards: {errors}");
+                        continue;
+                    }
+
+                    // Source Link and embedded texts require a PDB, which metadata-only emits cannot
+                    // produce. They are not needed to read type forwards, so omit them here.
+                    var emitResult = EmitMetadataForTypeForwards(compilation, data.EmitData, data.EmitOptions);
+                    if (!emitResult.Success)
+                    {
+                        var errors = string.Join("; ", diagnostics.Concat(emitResult.Diagnostics)
+                            .Where(static d => d.Severity == DiagnosticSeverity.Error)
+                            .Select(static d => d.ToString()));
+                        Log.Message($"Failed to emit assembly '{data.EmitData.AssemblyFileName}' from '{path}' while reading type forwards: {errors}");
+                        continue;
+                    }
+
+                    var thisAssemblyName = Path.GetFileNameWithoutExtension(data.EmitData.AssemblyFileName);
+                    foreach (var forward in TypeForwardReader.ReadTypeForwardsFromAssembly(emitResult.AssemblyStream, thisAssemblyName))
+                    {
+                        typeForwards[ValueTuple.Create(forward.Item1, forward.Item2)] = forward.Item3;
+                    }
+                }
+
+                return;
+            }
+
             {
                 var obj = new TypeForwardReader();
                 var forwards = obj.GetTypeForwards(path, properties);
@@ -344,6 +400,19 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                     typeForwards[ValueTuple.Create(forward.Item1, forward.Item2)] = forward.Item3;
                 }
             }
+        }
+
+        internal static EmitMemoryResult EmitMetadataForTypeForwards(
+            Compilation compilation,
+            EmitData emitData,
+            EmitOptions emitOptions)
+        {
+            return compilation.EmitToMemory(
+                EmitFlags.MetadataOnly,
+                win32ResourceStream: emitData.Win32ResourceStream,
+                manifestResources: emitData.Resources,
+                // PortablePdb needed due to https://github.com/dotnet/roslyn/issues/78721.
+                emitOptions: emitOptions.WithDebugInformationFormat(DebugInformationFormat.PortablePdb));
         }
 
         private static async Task IndexSolutionsAsync(
@@ -492,6 +561,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                             properties: properties.ToImmutableDictionary(),
                             federation: federation,
                             serverPathMappings: serverPathMappings,
+                            repoPathMappings: repoPathMappings,
                             pluginBlacklist: pluginBlacklist,
                             doNotIncludeReferencedProjects: doNotIncludeReferencedProjects,
                             includeSourceGeneratedDocuments: includeSourceGeneratedDocuments,
@@ -503,7 +573,6 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                         solutionGenerator.GlobalAssemblyList = assemblyNames;
                         solutionGenerator.RepoName = repoName;
                         solutionGenerator.SolutionName = solutionName;
-                        solutionGenerator.RepoPathMappings = repoPathMappings;
                         solutionGenerator.DistinctRepoCount = distinctRepoCount;
                         solutionGenerator.SolutionCountsByRepo = solutionCountsByRepo;
                         using (Disposable.Timing("Pass1 writing for " + path))
@@ -584,7 +653,8 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         private static string GetSolutionName(string path)
         {
             if (path.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) ||
-                path.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase))
+                path.EndsWith(".slnx", StringComparison.OrdinalIgnoreCase) ||
+                path.EndsWith(".complog", StringComparison.OrdinalIgnoreCase))
             {
                 return Path.GetFileNameWithoutExtension(path);
             }

@@ -155,25 +155,19 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 return Path.GetFileName(filePath);
             }
 
-            if (relativeToPath.EndsWith("\\", StringComparison.Ordinal))
-            {
-                relativeToPath = relativeToPath.TrimEnd('\\');
-            }
+            relativeToPath = relativeToPath.TrimEnd(['\\', '/']);
 
             StringBuilder result = new StringBuilder();
             while (!IsOrContains(relativeToPath, filePath))
             {
-                result.Append(@"..\");
+                result.Append($"..{Path.DirectorySeparatorChar}");
                 relativeToPath = Path.GetDirectoryName(relativeToPath);
             }
 
             if (filePath.Length > relativeToPath.Length)
             {
                 filePath = filePath.Substring(relativeToPath.Length);
-                if (filePath.StartsWith("\\", StringComparison.Ordinal))
-                {
-                    filePath = filePath.Substring(1);
-                }
+                filePath = filePath.TrimStart(['\\', '/']);
 
                 result.Append(filePath);
             }
@@ -250,7 +244,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 var parts = document.FilePath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries);
                 if (parts.Length >= 3) // Last 3 directories: generator assembly name, generator full class name, hint name
                 {
-                    folders = ["Generated", ..parts.Skip(parts.Length - 3).Take(2)];
+                    folders = ["Generated", .. parts.Skip(parts.Length - 3).Take(2)];
                 }
             }
 
@@ -334,7 +328,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             if (!string.IsNullOrEmpty(folder))
             {
                 var hashedFolder = GetMD5Hash(folder, 16);
-                var separatorIndex = folder.IndexOf('\\');
+                var separatorIndex = folder.IndexOfAny(['\\', '/']);
                 prefix = separatorIndex > 0
                     ? Path.Combine(folder.Substring(0, separatorIndex), hashedFolder)
                     : hashedFolder;
@@ -429,9 +423,9 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 return path;
             }
 
-            if (!path.EndsWith("\\", StringComparison.Ordinal))
+            if (path[^1] is not ('\\' or '/'))
             {
-                path += "\\";
+                path += Path.DirectorySeparatorChar;
             }
 
             return path;

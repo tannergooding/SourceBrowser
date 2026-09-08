@@ -31,7 +31,7 @@ namespace Microsoft.SourceBrowser.Common
                 return path;
             }
 
-            return path.TrimEnd('\\');
+            return path.TrimEnd(['\\', '/']);
         }
 
         public static string MustBeAbsolute(this string path)

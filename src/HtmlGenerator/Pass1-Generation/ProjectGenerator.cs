@@ -29,12 +29,12 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
         /// <summary>Repo tag resolved per project from the owning SolutionGenerator's /repoPath
         /// mappings (falling back to its per-input tag); solution tag is inherited as-is.</summary>
-        public string RepoName => SolutionGenerator?.ResolveRepoName(ProjectFilePath) ?? string.Empty;
+        public string RepoName => SolutionGenerator?.ResolveRepoName(Project) ?? string.Empty;
 
         /// <summary>Repo ancestry resolved per project (outermost repo first, own repo last), so a
         /// parent repo can include its nested sub-repos in filtering/grouping. See
         /// <see cref="SolutionGenerator.ResolveRepoChain"/>.</summary>
-        public IReadOnlyList<string> RepoChain => SolutionGenerator?.ResolveRepoChain(ProjectFilePath) ?? (IReadOnlyList<string>)System.Array.Empty<string>();
+        public IReadOnlyList<string> RepoChain => SolutionGenerator?.ResolveRepoChain(Project) ?? (IReadOnlyList<string>)System.Array.Empty<string>();
         public string SolutionName => SolutionGenerator?.SolutionName ?? string.Empty;
         public List<string> OtherFiles { get; set; }
         public IEnumerable<MEF.ISymbolVisitor> PluginSymbolVisitors { get; private set; }
@@ -60,7 +60,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 return relativePath;
             }
 
-            return Paths.GetRelativeFilePathInProject(document);
+            return Paths.GetRelativeFilePathInProject(document, ProjectFilePath);
         }
 
         public ProjectGenerator(SolutionGenerator solutionGenerator, Project project) : this()
@@ -207,7 +207,9 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 // documents that happen to resolve to the same folders+filename (e.g. two unrelated
                 // "IEnumerable.cs" files) don't silently collide once generation is partitioned and
                 // parallelized below -- see Paths.DisambiguateRelativePaths for the exact semantics.
-                var rawRelativePaths = documents.Select(Paths.GetRelativeFilePathInProject).ToArray();
+                var rawRelativePaths = documents
+                    .Select(document => Paths.GetRelativeFilePathInProject(document, ProjectFilePath))
+                    .ToArray();
                 var identityKeys = documents.Select(d => d.FilePath ?? d.Name).ToArray();
                 var disambiguatedRelativePaths = Paths.DisambiguateRelativePaths(rawRelativePaths, identityKeys);
 

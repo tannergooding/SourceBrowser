@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using Microsoft.SourceBrowser.HtmlGenerator;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -7,6 +8,14 @@ namespace Microsoft.SourceBrowser.HtmlGenerator.Tests
     [TestClass]
     public class FederationTests
     {
+        [TestMethod]
+        public void DefaultFederationUsesSourceDotNetOnly()
+        {
+            CollectionAssert.AreEqual(
+                new[] { "https://source.dot.net" },
+                Federation.DefaultFederatedIndexUrls.ToArray());
+        }
+
         [TestMethod]
         [DataRow(false, "System.Runtime/A.html#8281103e6f23cb5c")]
         [DataRow(true, "api/symbolredirect?symbolId=8281103e6f23cb5c")]

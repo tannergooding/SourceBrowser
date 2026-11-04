@@ -130,7 +130,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
                 if (hadExisting)
                 {
-                    Directory.Delete(previousDir, recursive: true);
+                    DeleteDirectoryWithRetry(previousDir);
                 }
             }
             catch
@@ -146,12 +146,22 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
         private static void MoveDirectoryWithRetry(string sourceDir, string destDir)
         {
+            PerformFileSystemOperationWithRetry(() => Directory.Move(sourceDir, destDir));
+        }
+
+        private static void DeleteDirectoryWithRetry(string directory)
+        {
+            PerformFileSystemOperationWithRetry(() => Directory.Delete(directory, recursive: true));
+        }
+
+        private static void PerformFileSystemOperationWithRetry(Action operation)
+        {
             const int maxAttempts = 20;
             for (int attempt = 1; ; attempt++)
             {
                 try
                 {
-                    Directory.Move(sourceDir, destDir);
+                    operation();
                     return;
                 }
                 catch (IOException) when (attempt < maxAttempts)

@@ -50,7 +50,7 @@ The only component that runs on the webserver is a service that given a search q
 By default the generator is not incremental: you generate into an empty folder from scratch every time (`/force`), then replace the currently deployed folder with the new contents atomically (using e.g. Azure Deployments, robocopy /MIR to inetpub\\wwwroot, etc). For smaller projects, deploying to Azure using Dropbox or Git would work just fine. An opt-in `/incremental` mode, along with multi-config sites and repo tagging, is also available -- see [docs/IncrementalConfigAndRepos.md](docs/IncrementalConfigAndRepos.md).
 
 ### Limitations and known issues
- 1. Indexing more than one project with the same assembly name is currently unsupported. Only the first project wins. This is due to a fundamental design decision to only reference an assembly by short name. Customizers should add a means to filter "victim" projects out in their forks to pick the best single project for inclusion in the index.
+ 1. Indexing more than one project with the same assembly name is currently unsupported. Only the first project wins. For `.complog` inputs, duplicate candidates are ranked before indexing: reference assemblies are deprioritized, then newer target frameworks, platform-specific builds, and compiler source-file counts contribute to the selection score. This is due to a fundamental design decision to only reference an assembly by short name. Customizers should add a means to filter "victim" projects out in their forks to pick the best single project for inclusion in the index.
  2. The generated website can only be hosted in the root of the domain. Making it run from a subdirectory is non-trivial and unlikely to be supported.
 
 ### Features

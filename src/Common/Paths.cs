@@ -31,7 +31,13 @@ namespace Microsoft.SourceBrowser.Common
                 return path;
             }
 
-            return path.TrimEnd('\\');
+            int rootLength = Path.GetPathRoot(path)?.Length ?? 0;
+            while (path.Length > rootLength && Path.EndsInDirectorySeparator(path))
+            {
+                path = Path.TrimEndingDirectorySeparator(path);
+            }
+
+            return path;
         }
 
         public static string MustBeAbsolute(this string path)

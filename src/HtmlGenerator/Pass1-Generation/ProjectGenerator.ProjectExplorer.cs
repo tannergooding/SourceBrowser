@@ -48,7 +48,9 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
             foreach (var otherFile in OtherFiles)
             {
-                var parts = otherFile.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries);
+                var parts = otherFile.Split(
+                    [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                    StringSplitOptions.RemoveEmptyEntries);
                 AddDocumentToFolder(root, otherFile, parts.Take(parts.Length - 1).ToArray());
             }
 

@@ -24,7 +24,7 @@ namespace Microsoft.SourceBrowser.Common
             var files = Directory.GetFiles(sourceDirectory, "*.*", SearchOption.AllDirectories);
             foreach (var file in files)
             {
-                var relative = file.Substring(sourceDirectory.Length + 1);
+                var relative = Path.GetRelativePath(sourceDirectory, file);
                 var destination = Path.Combine(destinationDirectory, relative);
                 CopyFile(file, destination);
             }

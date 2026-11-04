@@ -113,7 +113,10 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
 
         public static bool IsOrContains(string path, string possibleDescendent)
         {
-            return EnsureTrailingSlash(possibleDescendent).StartsWith(EnsureTrailingSlash(path), StringComparison.OrdinalIgnoreCase);
+            string relativePath = Path.GetRelativePath(path, possibleDescendent);
+            return !Path.IsPathRooted(relativePath) &&
+                !string.Equals(relativePath, "..", StringComparison.Ordinal) &&
+                !relativePath.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -148,31 +151,32 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 throw new ArgumentNullException(nameof(relativeToPath));
             }
 
-            // the file is on a different drive
-            if (filePath[0] != relativeToPath[0])
+            string relativePath = Path.GetRelativePath(relativeToPath, filePath);
+            if (Path.IsPathRooted(relativePath))
             {
-                // better than crashing
                 return Path.GetFileName(filePath);
             }
 
-            relativeToPath = relativeToPath.TrimEnd(['\\', '/']);
-
-            StringBuilder result = new StringBuilder();
-            while (!IsOrContains(relativeToPath, filePath))
+            if (string.Equals(relativePath, ".", StringComparison.Ordinal))
             {
-                result.Append($"..{Path.DirectorySeparatorChar}");
-                relativeToPath = Path.GetDirectoryName(relativeToPath);
+                return string.Empty;
             }
 
-            if (filePath.Length > relativeToPath.Length)
+            var pathSegments = relativePath.Split(
+                [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                StringSplitOptions.RemoveEmptyEntries);
+            if (pathSegments.Length > 0 &&
+                pathSegments.All(segment => string.Equals(segment, "..", StringComparison.Ordinal)))
             {
-                filePath = filePath.Substring(relativeToPath.Length);
-                filePath = filePath.TrimStart(['\\', '/']);
-
-                result.Append(filePath);
+                return relativePath + Path.DirectorySeparatorChar;
             }
 
-            return result.ToString();
+            if (Path.EndsInDirectorySeparator(filePath) && !Path.EndsInDirectorySeparator(relativePath))
+            {
+                relativePath += Path.DirectorySeparatorChar;
+            }
+
+            return relativePath;
         }
 
         /// <summary>
@@ -301,7 +305,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
             if (!string.IsNullOrEmpty(folder))
             {
                 var hashedFolder = GetMD5Hash(folder, 16);
-                var separatorIndex = folder.IndexOfAny(['\\', '/']);
+                var separatorIndex = folder.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]);
                 prefix = separatorIndex > 0
                     ? Path.Combine(folder.Substring(0, separatorIndex), hashedFolder)
                     : hashedFolder;
@@ -396,7 +400,7 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
                 return path;
             }
 
-            if (path[^1] is not ('\\' or '/'))
+            if (!Path.EndsInDirectorySeparator(path))
             {
                 path += Path.DirectorySeparatorChar;
             }
@@ -470,17 +474,18 @@ namespace Microsoft.SourceBrowser.HtmlGenerator
         {
             folder = Path.GetFullPath(folder);
             rootedFilePath = Path.GetFullPath(rootedFilePath);
-            if (rootedFilePath.StartsWith(folder, StringComparison.OrdinalIgnoreCase))
+            if (IsOrContains(folder, rootedFilePath))
             {
                 return rootedFilePath;
             }
 
-            var folderParts = folder.Split(Path.DirectorySeparatorChar);
-            var rootedFilePathParts = rootedFilePath.Split(Path.DirectorySeparatorChar);
+            var folderParts = folder.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]);
+            var rootedFilePathParts = rootedFilePath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar]);
+            var pathComparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
             int commonParts = 0;
             for (int i = 0; i < Math.Min(folderParts.Length, rootedFilePathParts.Length); i++)
             {
-                if (string.Equals(folderParts[i], rootedFilePathParts[i], StringComparison.OrdinalIgnoreCase))
+                if (pathComparer.Equals(folderParts[i], rootedFilePathParts[i]))
                 {
                     commonParts++;
                 }
